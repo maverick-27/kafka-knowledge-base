@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>09 Operations · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .stage.on { border-color: var(--write); background: color-mix(in srgb, var(--write) 18%, var(--bg)); }
+  .stage.done { border-color: var(--read); background: var(--read-soft); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 09 Operations</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 09 · Day 7 · Kafka 4.3</div>
+  <h1>Operations</h1>
+  <p class="lede">Running Kafka well is mostly arithmetic and discipline: size the cluster from real numbers, watch a short list of signals, and change one thing at a time. This module gives you the numbers, the signals and the procedures.</p>
+
+  <div class="lab-panel" id="cap-demo" style="margin:0">
+    <h3>Try it: size a cluster</h3>
+    <p class="hint">Enter the workload. The result is a first estimate to test, not a final answer.</p>
+    <div class="controls">
+      <label for="cp-rate">Write rate, MB each second</label>
+      <input id="cp-rate" type="number" min="1" max="2000" value="50">
+      <label for="cp-days">Retention, days</label>
+      <input id="cp-days" type="number" min="1" max="365" value="7">
+    </div>
+    <div class="controls">
+      <label for="cp-rf">Copies</label>
+      <select id="cp-rf"><option>2</option><option selected>3</option><option>5</option></select>
+      <label for="cp-comp">Compression</label>
+      <select id="cp-comp"><option value="1">none</option><option value="2">2 times</option><option value="4" selected>4 times</option><option value="10">10 times</option></select>
+      <label for="cp-disk">Disk for each broker, TB</label>
+      <select id="cp-disk"><option>2</option><option selected>4</option><option>8</option><option>16</option></select>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="cp-raw">–</b><span>stored data, all copies</span></div>
+      <div class="stat"><b id="cp-total">–</b><span>disk to provide, with 40% free</span></div>
+      <div class="stat"><b id="cp-brokers">–</b><span>brokers needed for the disk</span></div>
+      <div class="stat"><b id="cp-net">–</b><span>network into the cluster, with replication</span></div>
+    </div>
+    <div class="readout" id="cp-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>The earlier modules explained how Kafka works. Operations is the work of keeping it working: enough capacity, safe changes, quick detection of problems, and protection from clients that misbehave.</p>
+  <p>Kafka is forgiving in one way and strict in another. It keeps serving through a broker failure, a slow disk or a restart, which hides problems until two happen together. And several decisions cannot be undone: a partition count cannot go down, and deleted data does not come back. So operations is about seeing a problem while the cluster still has spare protection, and about thinking before irreversible changes.</p>
+  <p>This module covers seven areas: sizing, partition counts, the signals to watch, tiered storage, quotas, security, and upgrades.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> Size from write rate, retention and copies; keep spare capacity for one broker failure; alert on lost redundancy before lost availability; and roll every change through the cluster one broker at a time.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+    <p>A broker has four resources. Each has a typical way to run out.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Resource</th><th>Used for</th><th>How it runs out</th></tr></thead>
+        <tbody>
+          <tr><td>Disk space</td><td>Write rate × retention × copies.</td><td>Traffic grows, or retention is raised, and nobody recalculates.</td></tr>
+          <tr><td>Disk and network throughput</td><td>Client writes, follower copies, consumer reads.</td><td>A consumer reads old data from disk, or a broker failure moves load to the others.</td></tr>
+          <tr><td>Memory</td><td>Mostly the operating system's page cache, which serves recent data.</td><td>Readers fall behind what the cache holds, and reads go to disk.</td></tr>
+          <tr><td>Processor</td><td>Request handling, encryption, compression work.</td><td>Many small requests, encryption without hardware support, or the broker re-compressing batches.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The page cache explains a common surprise. A cluster is fast while every consumer reads recent data, because that data is still in memory. One consumer that starts from the beginning of a large topic forces reads from disk, pushes recent data out of memory, and slows everyone.</p>
+
+    <h3>Size for the day a broker fails</h3>
+    <p>When one broker of N stops, its leaderships move to the others. Each of them carries N ÷ (N − 1) of its normal load. With three brokers that is 50% more. A cluster that runs at 70% on a normal day has no room for this. So the target on a normal day is well below that.</p>
+
+    <h3>How many partitions</h3>
+  </div>
+
+  <div class="lab-panel wide reveal" id="pc-demo">
+    <h3>Try it: choose a partition count</h3>
+    <div class="controls">
+      <label for="pt-rate">Peak rate for the topic, records each second</label>
+      <input id="pt-rate" type="number" min="100" max="5000000" step="100" value="20000">
+      <label for="pt-cons">One consumer handles, records each second</label>
+      <input id="pt-cons" type="number" min="10" max="1000000" step="10" value="1500">
+      <label for="pt-grow">Growth to plan for</label>
+      <select id="pt-grow"><option value="1">none</option><option value="2" selected>2 times</option><option value="4">4 times</option></select>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="pt-min">–</b><span>consumers needed today</span></div>
+      <div class="stat"><b id="pt-rec">–</b><span>suggested partitions</span></div>
+    </div>
+    <div class="readout" id="pt-out" aria-live="polite"></div>
+  </div>
+
+  <div class="col">
+    <h3>Change one broker at a time</h3>
+    <p>Almost every change, a setting, a software version, a hardware repair, is applied as a <strong>rolling restart</strong>. Step through the procedure. The check before each restart is the part people skip, and it is the part that prevents outages.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="roll-demo">
+    <h3>Step through it: a rolling restart of three brokers</h3>
+    <div class="pipeline" id="rl-stages">
+      <div class="stage" data-i="0"><b>Before</b>Check health.</div>
+      <div class="stage" data-i="1"><b>Broker 1</b>Stop, change, start.</div>
+      <div class="stage" data-i="2"><b>Wait</b>Until fully in sync.</div>
+      <div class="stage" data-i="3"><b>Broker 2</b>Stop, change, start.</div>
+      <div class="stage" data-i="4"><b>Wait</b>Until fully in sync.</div>
+      <div class="stage" data-i="5"><b>Broker 3</b>The active controller goes last.</div>
+      <div class="stage" data-i="6"><b>After</b>Check health again.</div>
+    </div>
+    <div class="controls">
+      <button class="btn primary" type="button" id="rl-next">Next</button>
+      <button class="btn" type="button" id="rl-reset">Start again</button>
+    </div>
+    <div class="readout" id="rl-out" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>Sizing, with the arithmetic shown</h3>
+    <ol class="steps">
+      <li class="on"><strong>Stored data</strong> = write rate × retention time × copies ÷ compression ratio. Use the compressed rate if producers compress.</li>
+      <li class="on"><strong>Add the overshoot.</strong> Retention deletes whole segments (module 01), so add one segment for each partition, and a few percent for index files.</li>
+      <li class="on"><strong>Add free space.</strong> Plan for disks at most about 60% full. The rest absorbs growth, a reassignment, and the extra a broker receives when another one fails.</li>
+      <li class="on"><strong>Network.</strong> Each megabyte written by a client is also sent to each follower. Inbound traffic to the cluster's brokers is write rate × copies. Outbound is the follower traffic plus every consumer group's reads.</li>
+      <li class="on"><strong>Memory.</strong> Give the broker's Java process a modest fixed amount and leave the rest of the machine's memory to the page cache. A useful target is enough cache to hold the last 30 seconds to few minutes of writes. <span class="tag-unverified">unverified rule of thumb</span></li>
+      <li class="on"><strong>Test.</strong> Run the performance tools from module 02 with your record sizes on the real hardware. Published numbers from other people's hardware are a starting point only.</li>
+    </ol>
+
+    <h3>The signals to watch</h3>
+    <p>Brokers publish hundreds of metrics. A short list catches most problems. Module 12 reads each of these from a live broker by its exact name.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Signal</th><th>Healthy</th><th>What a bad value means</th></tr></thead>
+        <tbody>
+          <tr><td>Offline partitions</td><td>0</td><td>Some data cannot be read or written now. Page someone.</td></tr>
+          <tr><td>Active controller count, summed over controllers</td><td>exactly 1</td><td>0: no metadata changes possible. More than 1 for long: a serious fault.</td></tr>
+          <tr><td>Partitions under the in-sync minimum</td><td>0</td><td>Writes with <code>acks=all</code> are refused for them.</td></tr>
+          <tr><td>Under-replicated partitions</td><td>0</td><td>Redundancy is reduced. Nothing is broken yet. The best early warning.</td></tr>
+          <tr><td>In-sync set shrink and expand rate</td><td>near 0</td><td>A broker is at its limit or the network is unstable.</td></tr>
+          <tr><td>Request handler idle share</td><td>well above 30%</td><td>The broker's request threads are saturated.</td></tr>
+          <tr><td>Produce and fetch request time, 99th percentile</td><td>stable</td><td>Rising time without rising load points to a slow disk or follower.</td></tr>
+          <tr><td>Disk use for each data directory</td><td>below about 60%</td><td>Act before 80%. A full disk stops the broker.</td></tr>
+          <tr><td>Consumer lag, in time</td><td>within each application's limit</td><td>A consumer is too slow or stuck (module 03).</td></tr>
+          <tr><td>Quorum leader epoch</td><td>constant</td><td>Controller elections are happening (module 05).</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Without a metrics system, three command-line checks cover the top of the list. The lab runs them.</p>
+
+    <h3>Tiered storage</h3>
+    <p>Keeping months of data on broker disks is costly, and a broker with a lot of local data takes long to replace. With <strong>tiered storage</strong>, a broker copies closed segments to cheaper remote storage, such as an object store, and deletes its local copy after a short local retention. Consumers that read old offsets are served from the remote copy by the broker; clients do not change.</p>
+    <ul>
+      <li>The broker switch is <code>remote.log.storage.system.enable</code>, off by default. A storage plug-in for your object store must be installed.</li>
+      <li>A topic opts in with <code>remote.storage.enable=true</code> and sets <code>local.retention.ms</code> for the local part. <code>retention.ms</code> stays the total.</li>
+      <li>Only closed segments are copied. The active segment is always local.</li>
+      <li>Reads of old data are slower, and have a cost in requests to the object store.</li>
+    </ul>
+    <p class="note warn">The lab cluster has no remote storage plug-in, so I did not run it in this module. Module 14 runs it with a plug-in and shows segments moving to remote storage and being read back.</p>
+
+    <h3>Quotas</h3>
+    <p>A quota limits what one client can take, so that one application cannot starve the others. You can limit bytes produced each second, bytes fetched each second, and the share of broker request time. A quota is attached to a user, to a client id, or set as a default.</p>
+    <p>The broker does not reject requests over quota. It measures the rate over a window, 11 samples of 1 second by default, and when a client is over, it delays its responses and tells the client to wait. So a short burst passes, and a steady overload is slowed to the limit. The lab shows the burst effect.</p>
+
+    <h3>Security in three layers</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Question</th><th>Mechanism</th></tr></thead>
+        <tbody>
+          <tr><td>Encryption</td><td>Can someone on the network read the traffic?</td><td>TLS on the listener.</td></tr>
+          <tr><td>Authentication</td><td>Who is this client?</td><td>TLS client certificates, or SASL with a password, a token, or Kerberos.</td></tr>
+          <tr><td>Authorization</td><td>What may this client do?</td><td>Access control lists, checked by an authorizer on the broker.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Each <strong>listener</strong> is a port with its own security settings. A common layout has one listener for clients with TLS and authentication, one for traffic between brokers, and one for controllers on a private network.</p>
+    <p>The lab cluster has none of this. Its listeners are <code>PLAINTEXT</code> and its <code>authorizer.class.name</code> is empty, so anyone who can reach a port can read, write and delete everything. That is acceptable only on your own machine. Module 11 builds and tests a secured cluster.</p>
+
+    <h3>Changing settings</h3>
+    <p>Topic settings and many broker settings can be changed while the cluster runs, with <code>kafka-configs.sh</code>. The change is stored in the metadata log and applies to every broker without a restart. Other broker settings are read only at start and need a rolling restart. The tool's output shows where each value comes from: a default, the broker's file, or a dynamic change.</p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>All defaults below were read from the lab cluster with <code>kafka-configs.sh --describe --all</code>.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Broker config</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>num.network.threads</code></td><td>3</td><td>Threads that read requests from and write answers to the network.</td><td>Raise when the network threads' idle share is low, often with TLS.</td></tr>
+        <tr><td><code>num.io.threads</code></td><td>8</td><td>Threads that process requests, including disk work.</td><td>Raise on machines with many cores and disks when the request handler idle share is low.</td></tr>
+        <tr><td><code>background.threads</code></td><td>10</td><td>Threads for background work such as deleting files.</td><td>Rarely.</td></tr>
+        <tr><td><code>num.recovery.threads.per.data.dir</code></td><td>2</td><td>Threads that check logs at start and flush them at stop.</td><td>Raise to shorten restarts on brokers with many partitions.</td></tr>
+        <tr><td><code>queued.max.requests</code></td><td>500</td><td>Requests that may wait for a processing thread before the network threads stop reading.</td><td>Rarely.</td></tr>
+        <tr><td><code>socket.request.max.bytes</code></td><td>104857600 (100 MiB)</td><td>Largest request the broker accepts.</td><td>Rarely.</td></tr>
+        <tr><td><code>message.max.bytes</code></td><td>1048588</td><td>Largest record batch, as a broker default for topics.</td><td>Module 01.</td></tr>
+        <tr><td><code>max.connections.per.ip</code></td><td>2147483647</td><td>Connections allowed from one address.</td><td>Lower it to protect against a client that opens connections in a loop.</td></tr>
+        <tr><td><code>connections.max.idle.ms</code></td><td>600000 (10 minutes)</td><td>Idle connections are closed after this time.</td><td>Rarely.</td></tr>
+        <tr><td><code>auto.create.topics.enable</code></td><td><code>true</code></td><td>Creates a topic on first use.</td><td>Set <code>false</code> in production. The lab created a topic by accident this way in module 04.</td></tr>
+        <tr><td><code>delete.topic.enable</code></td><td><code>true</code></td><td>Allows topic deletion.</td><td>Protect deletion with access control, not with this switch.</td></tr>
+        <tr><td><code>num.partitions</code>, <code>default.replication.factor</code></td><td>1, 1</td><td>Defaults for topics created without explicit values.</td><td>Set the second to 3.</td></tr>
+        <tr><td><code>compression.type</code></td><td><code>producer</code></td><td>Keep batches as the producer compressed them.</td><td>Leave it.</td></tr>
+        <tr><td><code>quota.window.num</code>, <code>quota.window.size.seconds</code></td><td>11, 1</td><td>The window over which client rates are measured for quotas.</td><td>Rarely.</td></tr>
+        <tr><td><code>producer_byte_rate</code>, <code>consumer_byte_rate</code>, <code>request_percentage</code></td><td>no limit</td><td>Quotas, set with <code>kafka-configs.sh</code> for users or client ids.</td><td>On every shared cluster.</td></tr>
+        <tr><td><code>remote.log.storage.system.enable</code></td><td><code>false</code></td><td>Turns on tiered storage on the broker.</td><td>With a storage plug-in installed.</td></tr>
+        <tr><td><code>log.local.retention.ms</code></td><td>−2 (same as total retention)</td><td>Broker default for how long data stays on local disk with tiered storage.</td><td>Hours to a few days, when tiered storage is on.</td></tr>
+        <tr><td><code>listener.security.protocol.map</code></td><td>the lab maps every listener to <code>PLAINTEXT</code></td><td>The security protocol of each listener.</td><td>Use <code>SSL</code> or <code>SASL_SSL</code> for anything outside your own machine.</td></tr>
+        <tr><td><code>inter.broker.listener.name</code></td><td>the lab sets <code>PLAINTEXT</code></td><td>The listener that brokers use among themselves.</td><td>A dedicated, secured listener.</td></tr>
+        <tr><td><code>authorizer.class.name</code></td><td>empty: no access control</td><td>The class that checks access control lists.</td><td>Set the standard authorizer in production.</td></tr>
+        <tr><td><code>ssl.client.auth</code></td><td><code>none</code></td><td>Whether clients must present a certificate.</td><td><code>required</code> for certificate-based authentication.</td></tr>
+        <tr><td><code>controlled.shutdown.enable</code></td><td><code>true</code></td><td>Hand over leaderships before stopping.</td><td>Leave it on.</td></tr>
+        <tr><td><code>log.cleaner.threads</code></td><td>1</td><td>Compaction threads. It can be changed while running; the lab sets 2.</td><td>Raise when compaction falls behind.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>A disk fills</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The broker marks the data directory as failed and stops serving its partitions, or stops completely.</dd>
+      <dt>Cause</dt><dd>Growth without a recalculation; retention raised on a large topic; a compacted topic whose cleaner stopped; a reassignment that copied more than expected.</dd>
+      <dt>Fix</dt><dd>In an emergency, lower <code>retention.ms</code> on the largest topics and wait for the retention check, up to 5 minutes. Do not delete files by hand. Afterwards, alert at 60% and 75%, and set <code>retention.bytes</code> as a limit on topics that can grow without bound.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A second broker fails during a restart</h3>
+    <dl>
+      <dt>What breaks</dt><dd>With three copies and a minimum of 2, one broker down is fine. Two down stops writes for partitions on both.</dd>
+      <dt>Cause</dt><dd>The operator restarted the next broker before the first had rejoined every in-sync set, or a broker failed by itself during the maintenance.</dd>
+      <dt>Fix</dt><dd>Check for zero under-replicated partitions before each restart. Automate the check so that it cannot be skipped.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>One reader of old data slows the cluster</h3>
+    <dl>
+      <dt>You observe</dt><dd>Produce latency rises on a broker with no change in write rate. Disk reads jump.</dd>
+      <dt>Cause</dt><dd>A consumer reads from far back. Its data is not in the page cache, so the broker reads from disk and recent data is pushed out of memory.</dd>
+      <dt>Fix</dt><dd>Put a fetch quota on bulk readers. Run large replays outside peak hours. With tiered storage, old reads go to remote storage and do not disturb the local disk.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Adding partitions breaks ordering</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Events for one key are processed out of order after a partition increase.</dd>
+      <dt>Evidence</dt><dd>In the lab, the topic <code>orders</code> went from 3 to 6 partitions. The key <code>user-42</code> had been in partition 1 and its next record went to partition 4. The keys <code>user-17</code> and <code>user-1</code> stayed where they were.</dd>
+      <dt>Fix</dt><dd>Choose the count with growth in mind at creation. For a keyed topic that must grow, create a new topic and migrate. The count can never go down: the tool answers "3 would not be an increase".</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Too many partitions</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Broker restarts and failovers take long. The controller is busy. Producers make many tiny batches.</dd>
+      <dt>Cause</dt><dd>Hundreds of topics created with a large default count "to be safe".</dd>
+      <dt>Fix</dt><dd>Size each topic. Keep the total for each broker inside what you have tested. Small topics are fine with 1 to 3 partitions.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A topic that nobody protected</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A topic with one copy loses its data when its broker's disk fails.</dd>
+      <dt>Evidence</dt><dd>The lab's check for partitions under the in-sync minimum found a topic named <code>no-quorum</code> with one replica, left over from module 05, on a cluster whose minimum is 2. Nothing can be written to it with <code>acks=all</code>.</dd>
+      <dt>Fix</dt><dd>Review all topics for replication factor and minimum regularly. Turn off automatic topic creation and create topics through a reviewed process.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>An open cluster</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Any process on the network can delete topics or read every record.</dd>
+      <dt>Cause</dt><dd>Plain-text listeners and no authorizer, as in the lab.</dd>
+      <dt>Fix</dt><dd>TLS, authentication and access control lists before any real data arrives. Adding security later needs a careful migration with two listeners.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against the lab cluster, after the labs of modules 01 to 08. Tiered storage and security are not in this lab, for the reasons given above.</p>
+  </div>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092</code></pre></div>
+
+  <h3>Step 1. Three health checks</h3>
+  <p>Each prints the partitions in that state. No output means healthy.</p>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --describe --unavailable-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-min-isr-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-replicated-partitions</code></pre></div>
+  <pre class="out">(no unavailable partitions)
+
+Topic: no-quorum  Partition: 0  Leader: 2  Replicas: 2  Isr: 2  Elr:  LastKnownElr:
+
+(no under-replicated partitions)</pre>
+  <p>The second check found something real. The topic <code>no-quorum</code> has one replica. Its in-sync set, one broker, is below the cluster minimum of 2. It is not "under-replicated", because it has all the replicas it was given: one. This shows why you run all three checks.</p>
+
+  <h3>Step 2. Where the disk went</h3>
+  <div class="code"><pre><code>k kafka-log-dirs.sh --bootstrap-server $B --describe --broker-list 1 --topic-list perf,comp-none,orders</code></pre></div>
+  <div class="out-label">Output, reduced to partition and size in bytes</div>
+  <pre class="out">perf-0        247910144
+perf-2        241752474
+perf-1        237756878
+comp-none-0     1548818
+orders-0            713
+orders-2            159</pre>
+  <p>The tool prints one line of JSON; each partition has a size and a lag behind its leader. The three <code>perf</code> partitions hold about 730 MB from the throughput tests. On a real cluster, sort this output to find the topics to look at when a disk fills.</p>
+
+  <h3>Step 3. Lag for every group</h3>
+  <div class="code"><pre><code>k kafka-consumer-groups.sh --bootstrap-server $B --describe --all-groups</code></pre></div>
+  <pre class="out">g-classic  events  0  …  lag 1657
+g-classic  events  1  …  lag 928
+g-classic  events  2  …  lag 1230
+…</pre>
+  <p>The group reset in module 03 is still at the start of the topic with nobody running.</p>
+
+  <h3>Step 4. Add partitions and watch a key move</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --alter --topic orders --partitions 6
+printf 'user-42:after-change\nuser-17:after-change\nuser-1:after-change\n' | \
+  k kafka-console-producer.sh --bootstrap-server $B --topic orders \
+  --reader-property parse.key=true --reader-property key.separator=:
+k kafka-console-consumer.sh --bootstrap-server $B --topic orders --from-beginning \
+  --formatter-property print.key=true --formatter-property print.partition=true \
+  --formatter-property print.offset=true --timeout-ms 6000
+
+k kafka-topics.sh --bootstrap-server $B --alter --topic orders --partitions 3</code></pre></div>
+  <div class="out-label">Output, sorted by key</div>
+  <pre class="out">Partition:2  Offset:0   user-1   created
+Partition:2  Offset:2   user-1   after-change
+Partition:0  Offset:0   user-17  created
+Partition:0  Offset:11  user-17  after-change
+Partition:1  Offset:0   user-42  created
+Partition:1  Offset:1   user-42  paid
+Partition:1  Offset:2   user-42  shipped
+Partition:4  Offset:0   user-42  after-change      ← the same key, a different partition
+
+Error while executing topic command : The topic orders currently has 6 partition(s); 3 would not be an increase.</pre>
+  <p>The history of <code>user-42</code> is in partition 1 and its new record is in partition 4. Two consumers now hold parts of one customer's story, and nothing orders them against each other.</p>
+
+  <h3>Step 5. A quota, and why a short test misleads</h3>
+  <div class="code"><pre><code>k kafka-configs.sh --bootstrap-server $B --alter --add-config 'producer_byte_rate=5242880' \
+  --entity-type clients --entity-name slow-client
+
+k kafka-producer-perf-test.sh --topic perf --num-records 400000 --record-size 200 --throughput -1 \
+  --command-property bootstrap.servers=$B client.id=slow-client
+k kafka-producer-perf-test.sh --topic perf --num-records 400000 --record-size 200 --throughput -1 \
+  --command-property bootstrap.servers=$B client.id=fast-client
+
+k kafka-configs.sh --bootstrap-server $B --alter --delete-config producer_byte_rate \
+  --entity-type clients --entity-name slow-client</code></pre></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Client</th><th>Quota</th><th>MB each second</th><th>Average latency</th></tr></thead>
+      <tbody>
+        <tr><td><code>slow-client</code></td><td>5 MiB each second</td><td>21.64</td><td>973 ms</td></tr>
+        <tr><td><code>fast-client</code></td><td>none</td><td>39.03</td><td>422 ms</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The limited client was slowed, but it still averaged four times its quota. The test sent 80 MB in under 4 seconds, and the broker measures over an 11-second window, so most of the test was an allowed burst. My first two attempts, with 6 MB and 20 MB of data, showed no slowing at all. A quota limits a steady rate, not a burst. To see the steady limit, run a test that lasts a minute or more.</p>
+
+  <h3>Step 6. Change a broker setting without a restart</h3>
+  <div class="code"><pre><code>k kafka-configs.sh --bootstrap-server $B --alter --entity-type brokers --entity-default \
+  --add-config log.cleaner.threads=2
+k kafka-configs.sh --bootstrap-server $B --describe --entity-type brokers --entity-default</code></pre></div>
+  <pre class="out">Completed updating default config for brokers in the cluster.
+Default configs for brokers in the cluster are:
+  log.cleaner.threads=2  synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:log.cleaner.threads=2}
+  min.insync.replicas=2  synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:min.insync.replicas=2}</pre>
+  <p><code>DYNAMIC_DEFAULT_BROKER_CONFIG</code> means the value was set while running and applies to all brokers.</p>
+
+  <h3>Step 7. Delete records before an offset</h3>
+  <p>Sometimes data must go before retention removes it, for example after a bad batch. This moves a partition's start offset forward.</p>
+  <div class="code"><pre><code>docker exec kafka-1 sh -c 'echo "{\"partitions\":[{\"topic\":\"ha2\",\"partition\":0,\"offset\":100}],\"version\":1}" > /tmp/del.json'
+k kafka-delete-records.sh --bootstrap-server $B --offset-json-file /tmp/del.json
+k kafka-get-offsets.sh --bootstrap-server $B --topic ha2 --time earliest</code></pre></div>
+  <pre class="out">partition: ha2-0  low_watermark: 100
+ha2:0:100</pre>
+  <p>Offsets 0 to 99 are no longer readable. This cannot be undone.</p>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Give the broker's Java process most of the memory.</td><td>Kafka relies on the operating system's page cache. A large Java heap takes memory away from it and makes pauses longer.</td></tr>
+        <tr><td>Disk at 85% is fine while it works.</td><td>One broker failure or one reassignment can fill it. Keep about 40% free.</td></tr>
+        <tr><td>More partitions is the safe default.</td><td>Each has a cost, and the count cannot be reduced.</td></tr>
+        <tr><td>Under-replicated partitions will fix themselves.</td><td>Often, after a restart. A count above zero that stays is a broker in trouble.</td></tr>
+        <tr><td>A quota rejects requests over the limit.</td><td>It delays responses, measured over a window. Bursts pass.</td></tr>
+        <tr><td>We will add security later.</td><td>Later means a migration with every client. Start with it.</td></tr>
+        <tr><td>Tiered storage is a backup.</td><td>It is the same data in a cheaper place. A deleted topic is deleted there too.</td></tr>
+        <tr><td>A change that worked on one broker is safe to apply to all at once.</td><td>Roll it, one broker at a time, with a health check between.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>Size a cluster for 100 MB each second, 7 days of retention, 3 copies.</summary><div class="answer">
+    <p>Storage: 100 MB × 604,800 seconds × 3 = about 181 TB without compression. With a 4-times ratio, about 45 TB. With 40% free, provide about 76 TB. With 4 TB for each broker that is 19 brokers by disk alone; with 8 TB, 10 brokers.</p>
+    <p>Network: clients send 100 MB each second and followers receive 200 more, so about 300 MB each second inbound across the cluster, plus consumer reads outbound. Check each broker's share against its network link, after one broker has failed.</p>
+    <p>Then say what you would do next: confirm the compression ratio on real data, test one broker's limits on the real hardware, and consider tiered storage, which could cut local disk to a day or two.</p>
+  </div></details>
+
+  <details class="qa"><summary>One large cluster or several smaller ones?</summary><div class="answer">
+    <p>One cluster is cheaper to run, makes data easy to share, and uses hardware well. But every tenant shares its failures, its upgrades and its limits, and one bad client or topic can hurt all.</p>
+    <p>Several clusters isolate failure and let teams upgrade at their own pace, at the cost of more operations work and of copying data between clusters. A common result: a few clusters split by criticality or by data sensitivity, not one for each team. Quotas and access control are what make sharing a cluster workable.</p>
+  </div></details>
+
+  <details class="qa"><summary>When is tiered storage worth it?</summary><div class="answer">
+    <p>When retention is long compared with how far back most consumers read. Then most local disk holds data that is rarely touched. Moving it out cuts disk cost and makes brokers faster to replace and to rebalance, because there is less local data to copy.</p>
+    <p>It is not worth it for short retention, or when consumers often read old data and need the speed of local disk. Check also how it combines with compacted topics in your version before you plan on it.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you add security to a running open cluster with no outage?</summary><div class="answer">
+    <p>Add a second, secured listener beside the open one, with a rolling restart. Move clients to it application by application. Turn on the authorizer in a mode that still allows clients without rules, add access rules for each application, and watch the authorizer's log for requests that would be denied. When nothing would be denied, switch to deny by default. Finally remove the open listener with another rolling restart.</p>
+    <p>The slow part is finding every client. Use broker request logs and connection metrics by listener.</p>
+  </div></details>
+
+  <details class="qa"><summary>Which alerts page a person at night, and which wait for the morning?</summary><div class="answer">
+    <p>Night: offline partitions; no active controller; partitions under the in-sync minimum on critical topics; a disk about to fill within hours; consumer lag beyond a business limit on a critical flow.</p>
+    <p>Morning: under-replicated partitions with one broker down; a rising trend in disk use; frequent in-sync set changes; one consumer group slowly falling behind. These mean reduced protection, not lost service. Paging for them trains people to ignore pages.</p>
+  </div></details>
+
+  <details class="qa"><summary>A team asks for 500 partitions for a new topic. What do you ask?</summary><div class="answer">
+    <p>Their peak rate and how much one consumer instance processes, which gives the real need. Whether records have keys, since that decides if the count can ever change. How many consumer instances they will actually run. And how many other topics of this size the cluster already has.</p>
+    <p>Most requests like this come from a guess. A measured answer is often 12 to 48, with room to grow.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. Give the basic formula for stored data.</summary><div class="answer"><p>Write rate × retention time × copies, divided by the compression ratio.</p></div></details>
+  <details class="qa"><summary>2. Why keep about 40% of the disk free?</summary><div class="answer"><p>For growth, for the retention overshoot, for reassignments, and for the extra load when another broker fails.</p></div></details>
+  <details class="qa"><summary>3. What memory serves recent data to consumers?</summary><div class="answer"><p>The operating system's page cache, not the broker's Java heap.</p></div></details>
+  <details class="qa"><summary>4. Which three command-line checks show partition health?</summary><div class="answer"><p><code>kafka-topics.sh --describe</code> with <code>--unavailable-partitions</code>, <code>--under-min-isr-partitions</code> and <code>--under-replicated-partitions</code>.</p></div></details>
+  <details class="qa"><summary>5. What must be true before you restart the next broker in a rolling restart?</summary><div class="answer"><p>No partition is under-replicated: the last broker has rejoined every in-sync set.</p></div></details>
+  <details class="qa"><summary>6. What happens to a key's partition when you add partitions?</summary><div class="answer"><p>It can change, because the partition is the key's hash modulo the count. In the lab <code>user-42</code> moved from 1 to 4.</p></div></details>
+  <details class="qa"><summary>7. How does a broker enforce a quota?</summary><div class="answer"><p>It measures the client's rate over a window and delays responses when the client is over the limit.</p></div></details>
+  <details class="qa"><summary>8. What does tiered storage move, and what stays local?</summary><div class="answer"><p>Closed segments are copied to remote storage and removed locally after the local retention. The active segment stays local.</p></div></details>
+  <details class="qa"><summary>9. Name the three layers of security.</summary><div class="answer"><p>Encryption, authentication and authorization.</p></div></details>
+  <details class="qa"><summary>10. How do you change a topic setting on a running cluster?</summary><div class="answer"><p>With <code>kafka-configs.sh --alter</code>. No restart is needed.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="08-ecosystem.html">← 08 Ecosystem</a>
+    <a class="btn primary" href="10-multi-cluster.html">10 Multi-cluster and design →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- capacity calculator ----------
+(function () {
+  const ids = ['cp-rate', 'cp-days', 'cp-rf', 'cp-comp', 'cp-disk'];
+  const el = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
+  const raw = document.getElementById('cp-raw'), total = document.getElementById('cp-total'), brokers = document.getElementById('cp-brokers'), net = document.getElementById('cp-net'), out = document.getElementById('cp-out');
+  const tb = (n) => (n >= 100 ? Math.round(n) : n.toFixed(1)) + ' TB';
+  function draw() {
+    const rate = Math.max(1, Number(el['cp-rate'].value) || 1), days = Math.max(1, Number(el['cp-days'].value) || 1);
+    const rf = Number(el['cp-rf'].value), comp = Number(el['cp-comp'].value), disk = Number(el['cp-disk'].value);
+    const stored = (rate * 86400 * days * rf) / comp / 1e6;   // TB, decimal
+    const provide = stored / 0.6;
+    const byDisk = Math.ceil(provide / disk);
+    const n = Math.max(byDisk, rf);
+    raw.textContent = tb(stored);
+    total.textContent = tb(provide);
+    brokers.textContent = n;
+    net.textContent = Math.round((rate * rf) / comp) + ' MB/s';
+    const after = n > 1 ? Math.round((100 * n) / (n - 1) - 100) : 0;
+    out.innerHTML = rate + ' MB/s × ' + (86400 * days).toLocaleString('en-US') + ' s × ' + rf + ' copies ÷ ' + comp + ' = <b>' + tb(stored) + '</b>.\n'
+      + 'Divide by 0.6 to keep 40% free: ' + tb(provide) + '. With ' + disk + ' TB disks: ' + byDisk + ' broker' + (byDisk === 1 ? '' : 's')
+      + (byDisk < rf ? ', raised to ' + rf + ' because each copy needs its own broker.' : '.')
+      + '\nIf one of ' + n + ' brokers fails, each of the others carries about <b>' + after + '% more</b> load.'
+      + (n <= 3 ? '\n<span class="warn">With 3 brokers that is half as much again. Check throughput, not only disk.</span>' : '');
+  }
+  ids.forEach((id) => { el[id].addEventListener('input', draw); el[id].addEventListener('change', draw); });
+  draw();
+})();
+
+// ---------- partition count helper ----------
+(function () {
+  const rate = document.getElementById('pt-rate'), cons = document.getElementById('pt-cons'), grow = document.getElementById('pt-grow');
+  const min = document.getElementById('pt-min'), rec = document.getElementById('pt-rec'), out = document.getElementById('pt-out');
+  function draw() {
+    const r = Math.max(1, Number(rate.value) || 1), c = Math.max(1, Number(cons.value) || 1), g = Number(grow.value);
+    const need = Math.ceil(r / c);
+    let suggested = Math.max(3, Math.ceil(need * g * 1.2));
+    // round up to a multiple of 6 so that it divides evenly among 2, 3 or 6 consumers
+    if (suggested > 6) suggested = Math.ceil(suggested / 6) * 6;
+    min.textContent = need; rec.textContent = suggested;
+    let msg = r.toLocaleString('en-US') + ' ÷ ' + c.toLocaleString('en-US') + ' = ' + need + ' consumer' + (need === 1 ? '' : 's') + ' at peak. Times ' + g + ' for growth, plus 20% spare'
+      + (suggested > 6 ? ', rounded up to a multiple of 6 so that the partitions divide evenly among consumers.' : '.');
+    if (suggested >= 200) msg += '\n<span class="warn">This is a large count.</span> First try to make each consumer faster: batch writes to the database, process in parallel inside the consumer.';
+    else if (need === 1) msg += '\nOne consumer is enough. Use 3 partitions so that you have a spare consumer and room to grow.';
+    msg += '\nRemember: for a topic with keys, this number is very hard to change later.';
+    out.innerHTML = msg;
+  }
+  [rate, cons, grow].forEach((e) => { e.addEventListener('input', draw); e.addEventListener('change', draw); });
+  draw();
+})();
+
+// ---------- rolling restart stepper ----------
+(function () {
+  const stages = [...document.querySelectorAll('#rl-stages .stage')];
+  const out = document.getElementById('rl-out'), next = document.getElementById('rl-next');
+  const TEXT = [
+    'Run the three health checks. All must be empty. Find the active controller with kafka-metadata-quorum.sh and plan to restart it last. If anything is under-replicated now, stop: fix that first.',
+    'Stop broker 1 cleanly. It hands its leaderships to brokers 2 and 3 first. Apply the change and start it. <span class="warn">The cluster now has reduced protection:</span> every partition has two in-sync replicas, not three.',
+    'Broker 1 is running, but it is behind. It copies what it missed. Wait until under-replicated partitions is 0 again. <b>Do not continue before that.</b> A second broker down now would stop writes.',
+    'Stop broker 2 cleanly, apply the change, start it. Leaders move to brokers 1 and 3.',
+    'Wait again for under-replicated partitions to return to 0.',
+    'Broker 3 holds the active controller in this example. Restarting it last means only one controller election in the whole procedure. Stop, change, start.',
+    'Wait for full sync. Run the health checks again. Leadership is now uneven; Kafka moves it back to the preferred leaders in the background, or run a preferred leader election. Then watch client error rates and latency for a while before you call the change done.',
+  ];
+  let i;
+  function show() {
+    stages.forEach((s, n) => { s.classList.toggle('on', n === i); s.classList.toggle('done', n < i); });
+    out.innerHTML = 'Step ' + (i + 1) + ' of ' + TEXT.length + '. ' + TEXT[i];
+    next.disabled = i === TEXT.length - 1;
+  }
+  next.addEventListener('click', () => { if (i < TEXT.length - 1) { i++; show(); } });
+  document.getElementById('rl-reset').addEventListener('click', () => { i = 0; show(); });
+  i = 0; show();
+})();
+</script>
+<script src="extras/09.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

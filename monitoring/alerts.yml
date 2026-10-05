@@ -1,0 +1,26 @@
+# Alert rules for the signals in module 09. The "for" times are short so that the lab shows them quickly.
+groups:
+  - name: kafka
+    rules:
+      - alert: KafkaBrokerDown
+        expr: kafka_brokers < 3
+        for: 15s
+        labels: { severity: page }
+        annotations: { summary: 'Only {{ $value }} of 3 brokers are in the cluster.' }
+
+      - alert: KafkaUnderReplicatedPartitions
+        expr: sum(kafka_topic_partition_under_replicated_partition) > 0
+        for: 30s
+        labels: { severity: ticket }
+        annotations: { summary: '{{ $value }} partitions have fewer in-sync replicas than replicas. Redundancy is reduced.' }
+
+      - alert: KafkaPartitionBelowMinimum
+        expr: sum(kafka_topic_partition_in_sync_replica < 2) > 0
+        for: 15s
+        labels: { severity: page }
+        annotations: { summary: 'Partitions have fewer than 2 in-sync replicas. Writes with acks=all are refused.' }
+
+      # No consumer lag rule here. In my run, this exporter could not read consumer groups
+      # from Kafka 4.3 ("Cannot get consumer group: broker not connected"), so it publishes
+      # no lag metric. Read lag with kafka-consumer-groups.sh, or use an exporter that
+      # supports your Kafka version.

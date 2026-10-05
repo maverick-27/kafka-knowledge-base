@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11 Security lab · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .stage.pass { border-color: var(--read); background: var(--read-soft); }
+  .stage.stop { border-color: var(--gone); background: var(--gone-soft); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 11 Security lab</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 11 · Depth lab · Kafka 4.3</div>
+  <h1>Security lab</h1>
+  <p class="lede">Module 09 described security and ran none of it. This lab builds a locked cluster and tests every lock: encryption, user names and passwords, and permissions for each user. Every result on this page comes from a real run.</p>
+
+  <div class="lab-panel" id="gate-demo" style="margin:0">
+    <h3>Try it: how far does each client get?</h3>
+    <p class="hint">A request must pass three gates. Pick a client and see where it stops. The messages are the real ones from the lab.</p>
+    <div class="controls">
+      <label for="gt-client">Client</label>
+      <select id="gt-client">
+        <option value="plain">No TLS, no password</option>
+        <option value="notrust">TLS, but it does not trust the broker's certificate</option>
+        <option value="wrongpw">Trusts the certificate, wrong password</option>
+        <option value="alice0">alice, right password, no permissions yet</option>
+        <option value="alicew">alice, allowed to write payments-sec: writes</option>
+        <option value="alicer">alice, allowed to write: tries to read</option>
+        <option value="bobr">bob, allowed to read with group billing: reads</option>
+        <option value="bobg">bob, same permissions: reads with another group</option>
+        <option value="admin">admin, a super user</option>
+      </select>
+    </div>
+    <div class="pipeline" id="gt-stages">
+      <div class="stage" data-i="0"><b>1 Encryption</b>TLS: is the channel private, and is this really the broker?</div>
+      <div class="stage" data-i="1"><b>2 Authentication</b>SASL: who is this client?</div>
+      <div class="stage" data-i="2"><b>3 Authorization</b>Access control: may this user do this?</div>
+      <div class="stage" data-i="3"><b>Done</b>The request is served.</div>
+    </div>
+    <div class="readout" id="gt-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>A cluster with default settings accepts anyone who can reach a port. That person can read every record, write to every topic, and delete every topic. The main lab cluster in this knowledge base is like that, on purpose, so that the first ten modules stay simple.</p>
+  <p>Securing a cluster means adding three things, each of which answers a different question.</p>
+  <ul>
+    <li><strong>Encryption</strong> with TLS. Nobody on the network can read or change the traffic, and the client can check that it is talking to the real broker.</li>
+    <li><strong>Authentication</strong> with SASL or client certificates. The broker knows which user each connection belongs to. A user is called a <strong>principal</strong>, written like <code>User:alice</code>.</li>
+    <li><strong>Authorization</strong> with access control lists. For each principal, rules say which operations are allowed on which topics, groups and other resources.</li>
+  </ul>
+  <p>They depend on each other. Permissions mean nothing if anyone can claim to be <code>alice</code>. A password means little if it crosses the network in clear text.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> TLS makes the channel private and proves the broker, SASL proves the client, and access control lists decide what that client may do, with everything denied unless a rule allows it.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part col" id="model" data-title="Mental model">
+  <span class="offset-tag">offset 1</span>
+  <h2>Mental model</h2>
+  <p>Think of an office building. The corridor to the door is private, and the sign on the door is checked: that is TLS. At the door you show a badge: that is authentication. Inside, your badge opens some rooms and not others: that is authorization. A list of who entered which room is the audit log.</p>
+
+  <h3>Listeners</h3>
+  <p>A broker can listen on several ports, and each one, a <strong>listener</strong>, has its own security protocol. This is how a cluster offers a secured port to applications while brokers and controllers talk on their own ports.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Protocol</th><th>Encrypted</th><th>Client proves who it is</th></tr></thead>
+      <tbody>
+        <tr><td><code>PLAINTEXT</code></td><td>No</td><td>No. Every client is <code>User:ANONYMOUS</code>.</td></tr>
+        <tr><td><code>SSL</code></td><td>Yes</td><td>Only if client certificates are required.</td></tr>
+        <tr><td><code>SASL_PLAINTEXT</code></td><td>No</td><td>Yes, but the exchange is not protected.</td></tr>
+        <tr><td><code>SASL_SSL</code></td><td>Yes</td><td>Yes. The usual choice for clients.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Ways to authenticate</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Mechanism</th><th>How it works</th><th>Use it when</th></tr></thead>
+      <tbody>
+        <tr><td>SASL PLAIN</td><td>A user name and password, sent inside TLS.</td><td>Labs, or with a password store behind it. This lab uses it.</td></tr>
+        <tr><td>SASL SCRAM</td><td>A password that is never sent; both sides prove they know it.</td><td>Passwords managed in Kafka itself.</td></tr>
+        <tr><td>SASL OAUTHBEARER</td><td>A signed token from an identity service.</td><td>Companies with a central identity provider.</td></tr>
+        <tr><td>Client certificates</td><td>The client presents its own certificate in TLS.</td><td>Service-to-service identity with an existing certificate system.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note warn">This lab ran SASL PLAIN only. The other three rows are described from general knowledge. <span class="tag-unverified">unverified</span></p>
+
+  <h3>What a permission looks like</h3>
+  <p>One rule says: this <strong>principal</strong> is allowed (or denied) this <strong>operation</strong> on this <strong>resource</strong>. A real rule from the lab:</p>
+  <pre class="out">(principal=User:alice, host=*, operation=WRITE, permissionType=ALLOW)
+on ResourcePattern(resourceType=TOPIC, name=payments-sec, patternType=LITERAL)</pre>
+  <p>With <code>allow.everyone.if.no.acl.found=false</code>, anything without a matching allow rule is denied. A <strong>super user</strong> skips all rules.</p>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part col" id="internals" data-title="How it works">
+  <span class="offset-tag">offset 2</span>
+  <h2>How it works internally</h2>
+
+  <h3>The TLS handshake</h3>
+  <ol class="steps">
+    <li class="on">The broker has a private key and a certificate that names it, here <code>CN=kafka-sec</code> with the host names <code>kafka-sec</code> and <code>localhost</code>.</li>
+    <li class="on">The certificate is signed by a <strong>certificate authority</strong>, here a lab authority named "Kafka Lab CA".</li>
+    <li class="on">The client has a <strong>truststore</strong>: the list of authorities it believes. In the lab it holds exactly one entry, the lab authority.</li>
+    <li class="on">On connection, the broker sends its certificate. The client checks the signature against its truststore and checks that the host name it dialled is in the certificate.</li>
+    <li class="on">Both sides agree on keys, and everything after that is encrypted.</li>
+  </ol>
+  <p>The client never needs the broker's private key, and it does not need the broker's certificate in advance: only the authority's certificate. That is why one truststore file works for every broker signed by the same authority.</p>
+
+  <h3>Authentication, then the principal</h3>
+  <p>Inside the encrypted channel, the client sends its user name and password. The broker checks them against the users it was configured with. From then on, every request on that connection carries the principal <code>User:alice</code>. The client does not send its name with each request and cannot change it.</p>
+
+  <h3>Authorization on every request</h3>
+  <p>For each request, the broker asks the <strong>authorizer</strong>: may this principal perform this operation on this resource? The standard authorizer stores the rules in the cluster metadata log (module 05), so every broker has the same rules. Each denial is written to a log file. A real line from the lab:</p>
+  <pre class="out">Principal = User:alice is Denied operation = CREATE from host = 172.23.0.2
+on resource = Topic:LITERAL:alice-topic for request = CreateTopics … based on rule DefaultDeny</pre>
+
+  <h3>What a simple action really needs</h3>
+  <p>One client action needs several permissions. The tool's shortcuts add them together:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Shortcut</th><th>Rules it created in the lab</th></tr></thead>
+      <tbody>
+        <tr><td><code>--producer --topic T</code></td><td><code>WRITE</code>, <code>DESCRIBE</code> and <code>CREATE</code> on topic T</td></tr>
+        <tr><td><code>--consumer --topic T --group G</code></td><td><code>READ</code> and <code>DESCRIBE</code> on topic T, and <code>READ</code> on group G</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>A consumer needs permission on its <strong>group</strong> as well as on the topic. In the lab, bob could read the topic with the group <code>billing</code> and was refused with any other group name.</p>
+
+  <h3>Brokers and controllers are clients too</h3>
+  <p>A broker connects to other brokers and to the controllers. Those connections must also authenticate. In the lab, the broker uses the user <code>admin</code> for both, and the controller listener requires a password as well. A common mistake is to secure the client port and leave the controller port open.</p>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>The "Lab" column is what <code>secure/docker-compose.yml</code> sets. The cluster started and passed every test with exactly these values.</p>
+  </div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Broker config</th><th>Lab</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>listeners</code></td><td><code>SECURE://:9094, CONTROLLER://:9093</code></td><td>The ports and their names.</td></tr>
+        <tr><td><code>listener.security.protocol.map</code></td><td><code>SECURE:SASL_SSL, CONTROLLER:SASL_PLAINTEXT</code></td><td>The protocol of each listener. In production, make the controller listener <code>SASL_SSL</code> too.</td></tr>
+        <tr><td><code>inter.broker.listener.name</code></td><td><code>SECURE</code></td><td>Brokers talk to each other on the secured listener.</td></tr>
+        <tr><td><code>ssl.keystore.location</code>, <code>ssl.keystore.password</code>, <code>ssl.keystore.type</code></td><td><code>broker.p12</code>, PKCS12</td><td>The broker's private key and signed certificate.</td></tr>
+        <tr><td><code>ssl.truststore.location</code>, <code>ssl.truststore.password</code></td><td><code>truststore.p12</code></td><td>The authorities the broker believes, for its own outgoing connections.</td></tr>
+        <tr><td><code>sasl.enabled.mechanisms</code></td><td><code>PLAIN</code></td><td>Which login mechanisms the broker accepts. The default is <code>GSSAPI</code>, which is Kerberos.</td></tr>
+        <tr><td><code>sasl.mechanism.inter.broker.protocol</code>, <code>sasl.mechanism.controller.protocol</code></td><td><code>PLAIN</code></td><td>How the broker logs in to other brokers and to controllers.</td></tr>
+        <tr><td><code>listener.name.secure.plain.sasl.jaas.config</code></td><td>users admin, alice, bob</td><td>For PLAIN: the list of users and passwords, and the broker's own login. In production, passwords do not belong in a configuration file.</td></tr>
+        <tr><td><code>authorizer.class.name</code></td><td><code>org.apache.kafka.metadata.authorizer.StandardAuthorizer</code></td><td>Turns on access control. The default is empty: no checks.</td></tr>
+        <tr><td><code>super.users</code></td><td><code>User:admin</code></td><td>Principals that skip all rules. Keep the list very short.</td></tr>
+        <tr><td><code>allow.everyone.if.no.acl.found</code></td><td><code>false</code></td><td>Deny when no rule matches. <code>true</code> is useful only while migrating an open cluster.</td></tr>
+        <tr><td><code>ssl.client.auth</code></td><td>default <code>none</code></td><td><code>required</code> makes clients present a certificate. Not used in this lab.</td></tr>
+        <tr><td><code>auto.create.topics.enable</code></td><td><code>false</code></td><td>Topics are created only by someone with permission.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col"><h3>Client settings</h3></div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Client config</th><th>Lab value</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>security.protocol</code></td><td><code>SASL_SSL</code></td><td>Must match the listener. The default is <code>PLAINTEXT</code>.</td></tr>
+        <tr><td><code>sasl.mechanism</code></td><td><code>PLAIN</code></td><td>The login mechanism.</td></tr>
+        <tr><td><code>sasl.jaas.config</code></td><td>the user name and password</td><td>The client's credentials.</td></tr>
+        <tr><td><code>ssl.truststore.location</code>, <code>ssl.truststore.password</code>, <code>ssl.truststore.type</code></td><td><code>truststore.p12</code>, PKCS12</td><td>The authority that signed the broker's certificate.</td></tr>
+        <tr><td><code>ssl.endpoint.identification.algorithm</code></td><td>default <code>https</code></td><td>Checks the host name against the certificate. Never set it to empty in production. <span class="tag-unverified">unverified default</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>A client without TLS connects to a TLS port</h3>
+    <dl>
+      <dt>You observe</dt><dd>The client dies with <code>java.lang.OutOfMemoryError: Java heap space</code>. Nothing mentions security.</dd>
+      <dt>Cause</dt><dd>The client expects a plain Kafka answer that starts with a length. It receives TLS bytes, reads them as a huge length, and tries to allocate that much memory.</dd>
+      <dt>Fix</dt><dd>Set <code>security.protocol</code> on the client. When a client runs out of memory at connection time, check the protocol before the heap size.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The client does not trust the broker</h3>
+    <dl>
+      <dt>You observe</dt><dd>"failed authentication due to: SSL handshake failed", <code>SslAuthenticationException</code>.</dd>
+      <dt>Cause</dt><dd>No truststore, the wrong authority in it, an expired certificate, or a host name that is not in the certificate.</dd>
+      <dt>Fix</dt><dd>Give the client the right authority certificate. Check the certificate's dates and names with <code>keytool -list -v</code>.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Wrong user name or password</h3>
+    <dl>
+      <dt>You observe</dt><dd>"Authentication failed: Invalid username or password".</dd>
+      <dt>Note</dt><dd>The broker does not say which of the two was wrong. That is deliberate.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Authenticated but not allowed</h3>
+    <dl>
+      <dt>You observe</dt><dd>For a topic: "Authorization failed". For a consumer group: <code>GroupAuthorizationException: Not authorized to access group: snoop</code>. Listing topics does not fail: it returns only what the user may see, in the lab an empty list.</dd>
+      <dt>Fix</dt><dd>Read the authorizer log to see exactly which operation on which resource was denied, and add that rule. Do not make the user a super user.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A read-only user gets a "cluster" error when it tries to write</h3>
+    <dl>
+      <dt>You observe</dt><dd><code>ClusterAuthorizationException: Cluster authorization failed</code>, not a topic error.</dd>
+      <dt>Cause</dt><dd>The producer has idempotence on by default. Its first step is to ask for a producer id, and the broker allows that only for a user who may write to at least one topic. Bob may write to none. <span class="tag-unverified">unverified: the error is from the lab; this explanation is from memory</span></dd>
+      <dt>Fix</dt><dd>The denial is correct. Know the message, so that you do not go looking for a cluster-level problem.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Certificates expire</h3>
+    <dl>
+      <dt>What breaks</dt><dd>On one day, every client fails the handshake at the same moment. The lab certificates last 365 days.</dd>
+      <dt>Fix</dt><dd>Alert weeks before expiry. Practise rotation: brokers can load a new keystore without a restart through a dynamic setting. <span class="tag-unverified">unverified: rotation was not run in the lab</span></dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The controller port was forgotten</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Clients are locked down, but anyone who reaches the controller listener can act with full power.</dd>
+      <dt>Fix</dt><dd>Secure every listener, and put the controller listener on a network that only brokers and controllers can reach.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 5 October 2026.</strong> The secured cluster is separate from the main lab cluster, in the folder <code>secure/</code>. Its passwords are examples for a lab; they are written in the files and are not secrets.</p>
+  </div>
+
+  <h3>Step 1. Create certificates and start</h3>
+  <div class="code"><pre><code>cd ~/Desktop/kafka-knowledge-base/secure
+sh make-certs.sh          # a lab certificate authority, a broker certificate, a truststore
+docker compose up -d
+docker logs kafka-sec 2>&1 | grep 'Kafka Server started'
+
+s() { docker exec -i kafka-sec timeout 25 /opt/kafka/bin/"$@"; }
+S=kafka-sec:9094</code></pre></div>
+  <p>Read <code>make-certs.sh</code>: it is three short steps with <code>keytool</code>. The folder <code>clients/</code> holds one properties file for each kind of client used below.</p>
+
+  <h3>Step 2. Look at the certificate</h3>
+  <div class="code"><pre><code>docker exec kafka-sec keytool -list -keystore /etc/kafka/secrets/truststore.p12 -storepass labpass
+docker exec kafka-sec keytool -list -v -keystore /etc/kafka/secrets/broker.p12 -storepass labpass -alias broker | grep -E 'Owner|Issuer|DNSName'</code></pre></div>
+  <pre class="out">ca, Oct 5, 2026, trustedCertEntry
+
+Owner: CN=kafka-sec
+Issuer: CN=Kafka Lab CA
+  DNSName: kafka-sec
+  DNSName: localhost</pre>
+
+  <h3>Step 3. Three clients that are turned away at the door</h3>
+  <div class="code"><pre><code>s kafka-topics.sh --bootstrap-server $S --command-config /clients/plaintext.properties --list
+s kafka-topics.sh --bootstrap-server $S --command-config /clients/no-truststore.properties --list
+s kafka-topics.sh --bootstrap-server $S --command-config /clients/wrong-password.properties --list</code></pre></div>
+  <pre class="out">1. ERROR Uncaught exception in thread 'kafka-admin-client-thread' … java.lang.OutOfMemoryError: Java heap space
+
+2. ERROR … failed authentication due to: SSL handshake failed
+   org.apache.kafka.common.errors.SslAuthenticationException: SSL handshake failed
+
+3. ERROR … failed authentication due to: Authentication failed: Invalid username or password</pre>
+  <p>The first is the one to remember: a plain client on a TLS port fails with an out-of-memory error. The <code>timeout</code> in the helper stops these commands when they would retry for ever.</p>
+
+  <h3>Step 4. alice gets in, and may do nothing</h3>
+  <div class="code"><pre><code>s kafka-topics.sh --bootstrap-server $S --command-config /clients/alice.properties --list
+s kafka-topics.sh --bootstrap-server $S --command-config /clients/alice.properties \
+  --create --topic alice-topic --partitions 1 --replication-factor 1</code></pre></div>
+  <pre class="out">(an empty list)
+Error while executing topic command : Authorization failed.</pre>
+
+  <h3>Step 5. admin creates a topic and grants permissions</h3>
+  <div class="code"><pre><code>A=/clients/admin.properties
+s kafka-topics.sh --bootstrap-server $S --command-config $A --create --topic payments-sec --partitions 1 --replication-factor 1
+s kafka-acls.sh --bootstrap-server $S --command-config $A --add --allow-principal User:alice --producer --topic payments-sec
+s kafka-acls.sh --bootstrap-server $S --command-config $A --add --allow-principal User:bob --consumer --topic payments-sec --group billing</code></pre></div>
+  <pre class="out">Created topic payments-sec.
+Adding ACLs for resource `ResourcePattern(resourceType=TOPIC, name=payments-sec, patternType=LITERAL)`:
+    (principal=User:alice, host=*, operation=DESCRIBE, permissionType=ALLOW)
+    (principal=User:alice, host=*, operation=WRITE, permissionType=ALLOW)
+    (principal=User:alice, host=*, operation=CREATE, permissionType=ALLOW)
+Adding ACLs for resource `ResourcePattern(resourceType=GROUP, name=billing, patternType=LITERAL)`:
+    (principal=User:bob, host=*, operation=READ, permissionType=ALLOW)
+Adding ACLs for resource `ResourcePattern(resourceType=TOPIC, name=payments-sec, patternType=LITERAL)`:
+    (principal=User:bob, host=*, operation=DESCRIBE, permissionType=ALLOW)
+    (principal=User:bob, host=*, operation=READ, permissionType=ALLOW)</pre>
+
+  <h3>Step 6. Each user can do exactly its job</h3>
+  <div class="code"><pre><code>printf 'p1\np2\np3\n' | s kafka-console-producer.sh --bootstrap-server $S --command-config /clients/alice.properties --topic payments-sec
+s kafka-console-consumer.sh --bootstrap-server $S --command-config /clients/bob.properties --topic payments-sec --group billing --from-beginning --timeout-ms 8000
+
+echo x | s kafka-console-producer.sh --bootstrap-server $S --command-config /clients/bob.properties --topic payments-sec
+s kafka-console-consumer.sh --bootstrap-server $S --command-config /clients/alice.properties --topic payments-sec --group snoop --from-beginning --timeout-ms 6000
+s kafka-console-consumer.sh --bootstrap-server $S --command-config /clients/bob.properties --topic payments-sec --group other --from-beginning --timeout-ms 6000</code></pre></div>
+  <pre class="out">alice writes:               (no output: success)
+bob reads with "billing":   p1  p2  p3   Processed a total of 3 messages
+
+bob tries to write:         ClusterAuthorizationException: Cluster authorization failed.
+alice tries to read:        GroupAuthorizationException: Not authorized to access group: snoop
+bob with group "other":     GroupAuthorizationException: Not authorized to access group: other</pre>
+
+  <h3>Step 7. List the rules and read the denials</h3>
+  <div class="code"><pre><code>s kafka-acls.sh --bootstrap-server $S --command-config $A --list
+docker exec kafka-sec sh -c 'grep -i denied /opt/kafka/logs/kafka-authorizer.log | tail -3'</code></pre></div>
+  <pre class="out">Current ACLs for resource `ResourcePattern(resourceType=GROUP, name=billing, patternType=LITERAL)`:
+    (principal=User:bob, host=*, operation=READ, permissionType=ALLOW)
+Current ACLs for resource `ResourcePattern(resourceType=TOPIC, name=payments-sec, patternType=LITERAL)`:
+    (principal=User:bob, … operation=READ …)  (principal=User:alice, … operation=WRITE …)  …
+
+INFO Principal = User:alice is Denied operation = CREATE … on resource = Topic:LITERAL:alice-topic for request = CreateTopics … based on rule DefaultDeny
+INFO Principal = User:alice is Denied operation = DESCRIBE … on resource = Group:LITERAL:snoop for request = FindCoordinator … based on rule DefaultDeny
+INFO Principal = User:bob is Denied operation = DESCRIBE … on resource = Group:LITERAL:other for request = FindCoordinator … based on rule DefaultDeny</pre>
+  <p>The authorizer log is your audit trail and your debugging tool. Each line names the user, the operation, the resource, and the rule that decided.</p>
+
+  <h3>Step 8. Stop</h3>
+  <div class="code"><pre><code>docker compose down</code></pre></div>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>TLS means the cluster is secure.</td><td>TLS hides the traffic. Without authentication and rules, everyone who connects can still do everything.</td></tr>
+        <tr><td>A user who can read a topic can consume it.</td><td>It also needs permission on its consumer group.</td></tr>
+        <tr><td>An out-of-memory error at start is a memory problem.</td><td>On a TLS port it usually means the client is not using TLS.</td></tr>
+        <tr><td>Making the application a super user is a quick fix.</td><td>It removes every protection for that application, and those "quick fixes" are never undone.</td></tr>
+        <tr><td>Listing topics shows everything on the cluster.</td><td>It shows what the user may describe. An empty list can mean "no permission".</td></tr>
+        <tr><td>Securing the client port is enough.</td><td>Broker-to-broker and controller listeners need the same care.</td></tr>
+        <tr><td>Passwords in the broker's configuration are fine.</td><td>They are fine in this lab. In production, use SCRAM, tokens or certificates, and a secrets store.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>How do you add security to a running open cluster with no outage?</summary><div class="answer">
+    <p>Add a secured listener beside the open one, with a rolling restart. Move applications to it one by one. Turn the authorizer on with <code>allow.everyone.if.no.acl.found=true</code>, so that nothing is denied yet, and add rules for each application while you watch the authorizer log for requests that have no rule. When every application has its rules, switch that setting to <code>false</code>. Last, remove the open listener.</p>
+    <p>The slow part is finding every client. Connection counts for each listener tell you who is still on the old port.</p>
+  </div></details>
+
+  <details class="qa"><summary>Which authentication mechanism do you choose?</summary><div class="answer">
+    <p>Use what the company already runs for identity. With a central identity provider: tokens, so that users are created and removed in one place. With an internal certificate system for services: client certificates. With neither: SCRAM, where Kafka holds salted passwords and no password crosses the network.</p>
+    <p>Avoid PLAIN with passwords in configuration files outside a lab. Whatever you choose, decide how a credential is rotated before you issue the first one.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you organise permissions for thirty teams?</summary><div class="answer">
+    <p>By naming. Each team owns a prefix, and one prefixed rule gives the team's principal rights on every topic and group under it. Sharing between teams is an explicit rule that the owning team approves. Rules live in version control and are applied by automation, so that the cluster's rules always match a reviewed file.</p>
+    <p>Keep super users to the platform team's automation. Review the list of rules on a schedule; unused rules are how access spreads.</p>
+  </div></details>
+
+  <details class="qa"><summary>What does encryption cost, and where?</summary><div class="answer">
+    <p>Processor time on brokers and clients for every byte. And the loss of zero-copy: an encrypted response must pass through the broker process, where a plain one is sent from the file straight to the network (module 01). Size brokers with TLS turned on, and raise the network thread count if their idle share drops.</p>
+    <p>It is still the right default. Unencrypted traffic inside a "trusted" network is the usual way data leaks.</p>
+  </div></details>
+
+  <details class="qa"><summary>A team says "we are denied, please just open it up". How do you respond?</summary><div class="answer">
+    <p>Ask for the exact error and read the authorizer log line: principal, operation, resource. Almost always one rule is missing, often the consumer group, or the idempotent producer's needs. Add that one rule. Then improve the self-service path so that the next team does not need to ask.</p>
+  </div></details>
+
+  <details class="qa"><summary>What else does a regulated company need beyond these three layers?</summary><div class="answer">
+    <p>Encryption of data on disk, at the volume or by the application for sensitive fields. An audit trail kept outside the brokers. Quotas, so that a valid user cannot overload the cluster. Network limits on who can reach each listener. And a process: who approves access, how it is removed when someone leaves, how keys are rotated.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+  <details class="qa"><summary>1. Which question does each of the three layers answer?</summary><div class="answer"><p>Encryption: can anyone else read this? Authentication: who is this client? Authorization: may this user do this?</p></div></details>
+  <details class="qa"><summary>2. What does a client need in its truststore?</summary><div class="answer"><p>The certificate of the authority that signed the broker's certificate.</p></div></details>
+  <details class="qa"><summary>3. What is a principal?</summary><div class="answer"><p>The identity the broker attaches to a connection after authentication, such as <code>User:alice</code>.</p></div></details>
+  <details class="qa"><summary>4. Which two resources does a consumer need rules for?</summary><div class="answer"><p>The topic and its consumer group.</p></div></details>
+  <details class="qa"><summary>5. What happens to a request with no matching rule in this lab?</summary><div class="answer"><p>It is denied, because <code>allow.everyone.if.no.acl.found</code> is <code>false</code>.</p></div></details>
+  <details class="qa"><summary>6. Where do you find out why a request was denied?</summary><div class="answer"><p>In the broker's <code>kafka-authorizer.log</code>.</p></div></details>
+  <details class="qa"><summary>7. What does a plain client see when it connects to a TLS port?</summary><div class="answer"><p>In the lab, an out-of-memory error.</p></div></details>
+  <details class="qa"><summary>8. What is a super user?</summary><div class="answer"><p>A principal that skips all access rules.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="10-multi-cluster.html">← 10 Multi-cluster and design</a>
+    <a class="btn primary" href="12-monitoring-lab.html">12 Monitoring lab →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+(function () {
+  const sel = document.getElementById('gt-client'), stages = [...document.querySelectorAll('#gt-stages .stage')], out = document.getElementById('gt-out');
+  // [gate where it stops (0-2) or 3 for success, message]
+  const C = {
+    plain: [0, 'java.lang.OutOfMemoryError: Java heap space\nThe client does not speak TLS. It reads the broker\'s TLS bytes as a message length and tries to allocate that much memory. Nothing in the error mentions security.'],
+    notrust: [0, 'SslAuthenticationException: SSL handshake failed\nThe client has no truststore with the lab authority, so it cannot check the broker\'s certificate and refuses to continue.'],
+    wrongpw: [1, 'Authentication failed: Invalid username or password\nThe channel is private and the broker is proven. The broker does not accept the client. It does not say which of the two was wrong.'],
+    alice0: [2, 'Authorization failed.\nThe broker knows this is User:alice. No rule allows her anything, and the default is to deny. Listing topics returns an empty list.'],
+    alicew: [3, 'p1, p2, p3 written.\nA rule allows User:alice to WRITE to the topic payments-sec.'],
+    alicer: [2, 'GroupAuthorizationException: Not authorized to access group: snoop\nAlice may write. Nothing allows her to read, and nothing allows her to use a consumer group.'],
+    bobr: [3, 'p1, p2, p3 received.\nRules allow User:bob to READ the topic payments-sec and to use the group billing.'],
+    bobg: [2, 'GroupAuthorizationException: Not authorized to access group: other\nBob may read the topic, but only with the group billing. A consumer needs both rules.'],
+    admin: [3, 'Everything works.\nUser:admin is in super.users. No rule is checked. This is why that list must stay very short.'],
+  };
+  function draw() {
+    const [stop, msg] = C[sel.value];
+    stages.forEach((s, i) => { s.classList.toggle('pass', i < stop || stop === 3); s.classList.toggle('stop', i === stop && stop !== 3); });
+    out.innerHTML = (stop === 3 ? '<b>Served.</b> ' : '<span class="warn">Stopped at gate ' + (stop + 1) + '.</span> ') + msg;
+  }
+  sel.addEventListener('change', draw);
+  draw();
+})();
+</script>
+<script src="extras/11.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

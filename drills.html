@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Failure drills · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+<style>
+  main ul, main ol { padding-left: 1.3rem; }
+  .small { font-size: .92rem; color: var(--muted); }
+  details.drill .answer { padding: 0 1rem 1rem; }
+  details.drill summary { padding-right: 1rem; }
+  .dnum { display: inline-block; min-width: 1.6rem; font-family: var(--mono); color: var(--primary); }
+  .meta { display: block; font: 500 .8rem var(--mono); color: var(--muted); margin-top: .15rem; }
+  details.drill h4 { margin: 1.3rem 0 .3rem; font-size: 1rem; }
+  details.drill .w { margin: .5rem 0; min-width: 0; }
+  details.drill pre { font-size: .8rem; }
+  .code pre { padding-top: 2.4rem; }
+  .tools { display: grid; gap: .8rem; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: .7rem .9rem; margin: .8rem 0; }
+  .sw { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  .sw-time { font: 600 1.4rem var(--mono); min-width: 4.5rem; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0 .8rem; }
+  .form { display: grid; gap: .2rem; }
+  .form label, #w-preview + * { font-weight: 500; margin-top: .6rem; }
+  .lab-panel label[for="w-preview"] { display: block; font-weight: 500; margin-top: .8rem; }
+  input.answer { width: 100%; font: 400 1rem var(--body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .7rem .8rem; min-height: 44px; }
+  #w-preview { font-family: var(--mono); font-size: .85rem; }
+  [hidden] { display: none !important; }
+  .seg button[aria-pressed="true"] { background: var(--primary); color: var(--bg); font-weight: 600; }
+  main h2 { margin-top: 2.2rem; }
+  td, th { overflow-wrap: anywhere; }
+  button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ failure drills</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="hero">
+  <div class="eyebrow">Kafka 4.3 · 15 scripted incidents</div>
+  <h1>Failure-drill playbook</h1>
+  <p class="lede">Break the lab cluster on purpose, read what Kafka tells you, repair it, and write it up. Each drill leaves you with one real story: what went wrong, what you decided, and what you changed.</p>
+</div>
+
+<div class="wide">
+
+<div class="note warn">
+  <p><strong>These drills are assembled from commands run in the earlier labs. They were not run as timed drills.</strong> Outputs are copied from the modules. Where a step uses something no module shows, it carries the tag <span class="tag-unverified">unverified</span> and the words "not run in the labs".</p>
+</div>
+
+<h2>How to use this page</h2>
+<ul>
+  <li>One drill takes 30 to 60 minutes. Do one a week, or several in a day. The times on each card are estimates, not measurements.</li>
+  <li>Run the three health checks (from module 09) before you start and after you finish. Output means something is wrong. No output means healthy.</li>
+  <li>Predict first. Write down what you expect, then break the cluster. A surprise is the useful part.</li>
+  <li>Answer the questions before you repair. Then use the <a href="#writeup">write-up builder</a> at the bottom. It saves nothing and sends nothing.</li>
+  <li>If the cluster is left broken, run <code>docker compose down</code> and then <code>docker compose up -d</code> in the main folder. This removes the container data, so topics from earlier labs are gone and some drills need their setup again.</li>
+</ul>
+
+<h3>Helpers and health checks</h3>
+<p>Every drill uses these. Paste them into each new terminal.</p>
+<div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092
+d() { k kafka-topics.sh --bootstrap-server $B --describe --topic $1 | tail -1; }
+
+# the three health checks (module 09, step 1)
+k kafka-topics.sh --bootstrap-server $B --describe --unavailable-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-min-isr-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-replicated-partitions</code></pre></div>
+<p>Module 09 found a real leftover with the second check: the topic <code>no-quorum</code>, with one replica, appears under the minimum. You will see it after drill 5. If broker 1 is stopped, the helpers cannot reach the cluster: use another broker as shown in drill 5.</p>
+
+<h3>All drills</h3>
+<div class="lab-panel">
+  <div class="controls" role="group" aria-label="Filter drills">
+    <label id="lvl-label">Level</label>
+    <div class="seg" role="group" aria-labelledby="lvl-label" id="lvl-seg">
+      <button type="button" data-level="0" aria-pressed="true">All</button>
+      <button type="button" data-level="1" aria-pressed="false">1</button>
+      <button type="button" data-level="2" aria-pressed="false">2</button>
+      <button type="button" data-level="3" aria-pressed="false">3</button>
+    </div>
+    <label for="mod-filter">Module</label>
+    <select id="mod-filter"><option value="">All modules</option><option value="10">Module 10: Multi-cluster</option><option value="11">Module 11: Security lab</option><option value="01">Module 01: The log</option><option value="02">Module 02: Producers</option><option value="03">Module 03: Consumers</option><option value="04">Module 04: Replication</option><option value="05">Module 05: KRaft</option><option value="06">Module 06: Transactions</option><option value="08">Module 08: Ecosystem</option><option value="09">Module 09: Operations</option></select>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="shown">15</b><span>drills shown</span></div>
+    <div class="stat"><b id="finished">0</b><span>drills with all 6 steps done</span></div>
+  </div>
+  <div class="readout" id="filter-msg" aria-live="polite">Showing all 15 drills.</div>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>#</th><th>Drill</th><th>Level</th><th>Modules</th><th>Min</th><th>Done</th></tr></thead>
+    <tbody>
+<tr data-level="1" data-mods="04"><td>1</td><td><a href="#drill-1">Stop a follower: clean stop or kill</a></td><td>1</td><td>04</td><td>30</td><td data-done="1">0/6</td></tr>
+<tr data-level="1" data-mods="02 04"><td>2</td><td><a href="#drill-2">Below the in-sync minimum with acks=all</a></td><td>1</td><td>02, 04</td><td>25</td><td data-done="2">0/6</td></tr>
+<tr data-level="2" data-mods="04"><td>3</td><td><a href="#drill-3">Leader failure and leader epochs</a></td><td>2</td><td>04</td><td>35</td><td data-done="3">0/6</td></tr>
+<tr data-level="3" data-mods="04"><td>4</td><td><a href="#drill-4">Unclean election and lost records</a></td><td>3</td><td>04</td><td>45</td><td data-done="4">0/6</td></tr>
+<tr data-level="3" data-mods="05"><td>5</td><td><a href="#drill-5">Lose the controller majority</a></td><td>3</td><td>05</td><td>40</td><td data-done="5">0/6</td></tr>
+<tr data-level="1" data-mods="03"><td>6</td><td><a href="#drill-6">Rebalance and a dead group member</a></td><td>1</td><td>03</td><td>35</td><td data-done="6">0/6</td></tr>
+<tr data-level="2" data-mods="03 09"><td>7</td><td><a href="#drill-7">Lag and a stuck partition</a></td><td>2</td><td>03, 09</td><td>35</td><td data-done="7">0/6</td></tr>
+<tr data-level="2" data-mods="06"><td>8</td><td><a href="#drill-8">Hanging transaction and read_committed</a></td><td>2</td><td>06</td><td>45</td><td data-done="8">0/6</td></tr>
+<tr data-level="2" data-mods="08 03"><td>9</td><td><a href="#drill-9">Connect task failure and a dead-letter topic</a></td><td>2</td><td>08, 03</td><td>50</td><td data-done="9">0/6</td></tr>
+<tr data-level="1" data-mods="08"><td>10</td><td><a href="#drill-10">An incompatible schema change</a></td><td>1</td><td>08</td><td>35</td><td data-done="10">0/6</td></tr>
+<tr data-level="2" data-mods="09 02"><td>11</td><td><a href="#drill-11">A noisy client and quotas</a></td><td>2</td><td>09, 02</td><td>40</td><td data-done="11">0/6</td></tr>
+<tr data-level="1" data-mods="09 01 02"><td>12</td><td><a href="#drill-12">Adding partitions moves a key</a></td><td>1</td><td>09, 01, 02</td><td>30</td><td data-done="12">0/6</td></tr>
+<tr data-level="2" data-mods="09 01"><td>13</td><td><a href="#drill-13">The disk fills</a></td><td>2</td><td>09, 01</td><td>50</td><td data-done="13">0/6</td></tr>
+<tr data-level="3" data-mods="10 06 03"><td>14</td><td><a href="#drill-14">MirrorMaker failover to the second cluster</a></td><td>3</td><td>10, 06, 03</td><td>60</td><td data-done="14">0/6</td></tr>
+<tr data-level="2" data-mods="11"><td>15</td><td><a href="#drill-15">Secured cluster: password, truststore, ACL</a></td><td>2</td><td>11</td><td>45</td><td data-done="15">0/6</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="small">Level 1 is easy. Level 2 needs two or three steps and some waiting. Level 3 changes more than one broker or needs earlier drills. Your progress is saved in this browser only.</p>
+
+<h2>The drills</h2>
+
+<details class="qa drill" id="drill-1" data-level="1" data-mods="04" data-title="Stop a follower: clean stop or kill">
+  <summary><span class="dnum">1</span> Stop a follower: clean stop or kill<span class="meta">Level 1 · 30 min · <span data-prog="1">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/04-replication.html">Module 04</a>.</p>
+    <p><strong>Goal.</strong> See how one stopped follower changes the in-sync set, and measure how long Kafka takes to notice it.</p>
+    <div class="tools">
+      <div class="sw" data-sw="1"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 1">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 1">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 1"><label class="rubric"><input type="checkbox" data-drill="1" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="1" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="1" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="1" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="1" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="1" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic ha2 --replica-assignment 3:1:2
+seq 1 100 | k kafka-console-producer.sh --bootstrap-server $B --topic ha2
+d ha2</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code># Part A: a clean stop. Start the stopwatch first.
+docker stop kafka-2
+d ha2</code></pre></div><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: <code>docker kill kafka-2</code> as the second part (an abrupt stop, with no goodbye to the controller), and the timings for a follower. The module shows a clean stop of a leader, and a clean stop that leaves the in-sync set after 12 seconds. Predict the kill timing from the 9 second and 30 second values in the cheat sheet, then measure it.</em></p>
+    <h4>Watch</h4><div class="w"><p>Before the stop, broker 3 leads and all three are in sync (module 04, step 1):</p><pre class="out">Topic: ha2  Partition: 0  Leader: 3  Replicas: 3,1,2  Isr: 3,1,2  Elr:  LastKnownElr:</pre></div><div class="w"><p>Module 02 stopped a follower of another topic. After 12 seconds the describe line showed it had left the in-sync set and moved to the eligible list (<code>Elr</code>):</p><pre class="out">Topic: strict  Partition: 0  Leader: 1  Replicas: 3,1,2  Isr: 1,2  Elr: 3  LastKnownElr:</pre></div><div class="w"><p>Run the describe helper every few seconds and note when <code>Isr</code> changes. Also run the first health check from the top of the page.</p></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which broker leads <code>ha2</code> now? Did the leader change when you stopped broker 2? Why not?</li><li>How many seconds passed before <code>Isr</code> lost broker 2 after the clean stop?</li><li>What did the producer see while broker 2 was down? Try the producer command again.</li><li>Which two timers decide how fast Kafka notices a dead broker, and which one applies to a clean stop?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>docker start kafka-2
+# wait 14 seconds
+d ha2</code></pre></div><p>Expect <code>Isr: 3,1,2</code> again. The module saw a returning broker copy what it missed and rejoin after about 14 seconds.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What was the in-sync set before, during and after?</li><li>How long did detection take for a clean stop, and for a kill if you ran it?</li><li>Which alert would have told you, and how fast?</li></ul>
+    <p><button class="btn" type="button" data-writeup="1">Open the write-up builder for drill 1</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-2" data-level="1" data-mods="02 04" data-title="Below the in-sync minimum with acks=all">
+  <summary><span class="dnum">2</span> Below the in-sync minimum with acks=all<span class="meta">Level 1 · 25 min · <span data-prog="2">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/02-producers.html">Module 02</a>, <a href="modules/04-replication.html">Module 04</a>.</p>
+    <p><strong>Goal.</strong> Make a topic refuse writes on purpose, then learn what <code>acks=1</code> does in the same state.</p>
+    <div class="tools">
+      <div class="sw" data-sw="2"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 2">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 2">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 2"><label class="rubric"><input type="checkbox" data-drill="2" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="2" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="2" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="2" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="2" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="2" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic strict --partitions 1 \
+  --replication-factor 3 --config min.insync.replicas=3</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>docker stop kafka-3
+# wait 12 seconds
+k kafka-topics.sh --bootstrap-server $B --describe --topic strict
+
+echo hello | k kafka-console-producer.sh --bootstrap-server $B --topic strict \
+  --command-property delivery.timeout.ms=6000 --command-property request.timeout.ms=3000 \
+  --command-property linger.ms=0</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>The describe line and the producer log (module 02, step 5):</p><pre class="out">Topic: strict  Partition: 0  Leader: 1  Replicas: 3,1,2  Isr: 1,2  Elr: 3  LastKnownElr:
+
+WARN Got error produce response … on topic-partition strict-0, retrying (2 attempts left). Error: NOT_ENOUGH_REPLICAS
+WARN Got error produce response … on topic-partition strict-0, retrying (1 attempts left). Error: NOT_ENOUGH_REPLICAS
+WARN Got error produce response … on topic-partition strict-0, retrying (0 attempts left). Error: NOT_ENOUGH_REPLICAS
+ERROR Error when sending message to topic strict with key: null, value: 5 bytes with error: …</pre></div><div class="w"><p>Now send with <code>acks=1</code> and look at the end offset, before and after broker 3 returns:</p><div class="code"><pre><code>echo hello | k kafka-console-producer.sh --bootstrap-server $B --topic strict \
+  --request-required-acks 1 --command-property enable.idempotence=false
+k kafka-get-offsets.sh --bootstrap-server $B --topic strict</code></pre></div><pre class="out">strict:0:0      ← while broker 3 is stopped
+strict:0:1      ← after broker 3 returns</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Why did the leader refuse the write? State it with the numbers: how many are in sync, and how many does the topic need?</li><li>The <code>acks=1</code> producer got no error. Where is the record, and why can no consumer read it yet?</li><li>Which setting would let this topic survive one broker failure and still accept writes?</li><li>How long did the producer retry, and which setting set that limit?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>docker start kafka-3
+# wait 12 seconds
+k kafka-get-offsets.sh --bootstrap-server $B --topic strict</code></pre></div><p>The end offset moves to 1 when the third broker is back in the in-sync set. The permanent fix is a topic setting, not a restart: lower <code>min.insync.replicas</code> to 2 on a 3-copy topic.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What did the application see: errors, silence or both?</li><li>What number made the broker say no?</li><li>What would you change in the topic settings, and what do you give up?</li></ul>
+    <p><button class="btn" type="button" data-writeup="2">Open the write-up builder for drill 2</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-3" data-level="2" data-mods="04" data-title="Leader failure and leader epochs">
+  <summary><span class="dnum">3</span> Leader failure and leader epochs<span class="meta">Level 2 · 35 min · <span data-prog="3">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/04-replication.html">Module 04</a>.</p>
+    <p><strong>Goal.</strong> Stop a leader, write under the new leader, and read the epoch file that records who led which offsets.</p>
+    <div class="tools">
+      <div class="sw" data-sw="3"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 3">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 3">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 3"><label class="rubric"><input type="checkbox" data-drill="3" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="3" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="3" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="3" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="3" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="3" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">If you ran drill 1, the topic <code>ha2</code> already exists. Skip the create line, or use the name <code>ha3</code> and change it in every command.</p><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic ha2 --replica-assignment 3:1:2
+seq 1 100 | k kafka-console-producer.sh --bootstrap-server $B --topic ha2
+d ha2
+docker exec kafka-1 cat /tmp/kraft-combined-logs/ha2-0/leader-epoch-checkpoint</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>docker stop kafka-3
+d ha2
+seq 101 150 | k kafka-console-producer.sh --bootstrap-server $B --topic ha2
+docker exec kafka-1 cat /tmp/kraft-combined-logs/ha2-0/leader-epoch-checkpoint</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>Module 04, steps 1 and 2. Before the stop, then after:</p><pre class="out">Topic: ha2  Partition: 0  Leader: 3  Replicas: 3,1,2  Isr: 3,1,2  Elr:  LastKnownElr:
+0
+1
+0 0                ← epoch 0 started at offset 0
+
+Topic: ha2  Partition: 0  Leader: 1  Replicas: 3,1,2  Isr: 1,2    Elr:  LastKnownElr:
+
+0
+2
+0 0
+1 100              ← epoch 1 started at offset 100</pre></div><div class="w"><p>The module saw broker 1 become leader about one second after the stop. Time yours with the stopwatch.</p></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which broker leads now, and which epoch is it? How can you tell from the file?</li><li>Broker 3 is stopped. Which offsets does it have, and which does it lack?</li><li>When broker 3 returns, how will it use the epoch file to decide where to start copying?</li><li>Will broker 3 lead again by itself? What does the <code>preferred</code> election do?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>docker start kafka-3
+# wait 14 seconds
+d ha2
+k kafka-leader-election.sh --bootstrap-server $B --election-type preferred --topic ha2 --partition 0
+d ha2</code></pre></div><p>Module 04 saw all 150 records present, <code>Isr: 1,2,3</code>, and leader 3 after the preferred election.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What did clients see in the second after the stop?</li><li>What do the two epoch lines say happened?</li><li>What would you add to monitoring so a leader change is visible without a person running a describe?</li></ul>
+    <p><button class="btn" type="button" data-writeup="3">Open the write-up builder for drill 3</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-4" data-level="3" data-mods="04" data-title="Unclean election and lost records">
+  <summary><span class="dnum">4</span> Unclean election and lost records<span class="meta">Level 3 · 45 min · <span data-prog="4">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/04-replication.html">Module 04</a>.</p>
+    <p><strong>Goal.</strong> Cause a partition to go offline, force a leader that is missing records, and watch the data disappear.</p>
+    <div class="tools">
+      <div class="sw" data-sw="4"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 4">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 4">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 4"><label class="rubric"><input type="checkbox" data-drill="4" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="4" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="4" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="4" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="4" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="4" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">This is the one drill where two brokers are down for a while. Keep broker 1 running so the controllers keep a majority.</p><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic risky2 --replica-assignment 2:3 \
+  --config min.insync.replicas=1
+seq 1 10 | k kafka-console-producer.sh --bootstrap-server $B --topic risky2</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>docker stop kafka-3            # broker 3 now misses everything that follows
+# wait 8 seconds
+seq 11 20 | k kafka-console-producer.sh --bootstrap-server $B --topic risky2
+k kafka-get-offsets.sh --bootstrap-server $B --topic risky2
+
+docker stop kafka-2; docker start kafka-3    # the only in-sync broker is gone
+# wait 20 seconds
+d risky2</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>The partition is offline although broker 3 runs (module 04, step 4):</p><pre class="out">risky2:0:20
+
+Topic: risky2  Partition: 0  Leader: none  Replicas: 2,3  Isr:   Elr: 2  LastKnownElr: 2</pre></div><div class="w"><p>Decide, then force the election and read the end offset:</p><div class="code"><pre><code>k kafka-leader-election.sh --bootstrap-server $B --election-type unclean --topic risky2 --partition 0
+d risky2
+k kafka-get-offsets.sh --bootstrap-server $B --topic risky2</code></pre></div><pre class="out">Successfully completed leader election (UNCLEAN) for partitions risky2-0
+Topic: risky2  Partition: 0  Leader: 3  Replicas: 2,3  Isr: 3
+risky2:0:10</pre></div><div class="w"><p>Write five records, start broker 2, and read its log:</p><div class="code"><pre><code>seq 21 25 | k kafka-console-producer.sh --bootstrap-server $B --topic risky2
+docker start kafka-2
+# wait 16 seconds
+docker exec kafka-2 /opt/kafka/bin/kafka-dump-log.sh --print-data-log \
+  --files /tmp/kraft-combined-logs/risky2-0/00000000000000000000.log | grep -o 'payload: .*'
+docker logs kafka-2 2&gt;&amp;1 | grep -i 'risky2-0.*truncat'</code></pre></div><pre class="out">values on broker 2:  1 2 3 4 5 6 7 8 9 10 21 22 23 24 25
+
+WARN [UnifiedLog partition=risky2-0] Truncating risky2-0 to offset 10 below high watermark 20</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Why did Kafka refuse to make broker 3 the leader on its own?</li><li>Which records were lost, and who had acknowledged them? Was the producer told?</li><li>A consumer had committed offset 20 before the election. What does it see now?</li><li>Which two settings would have prevented the loss, and what would each have cost in availability?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>d risky2
+k kafka-get-offsets.sh --bootstrap-server $B --topic risky2</code></pre></div><p>The lost records cannot be recovered from Kafka. Check that both brokers run and the in-sync set has both. The real repair is a decision: replay values 11 to 20 from the source of truth, and raise <code>min.insync.replicas</code> to 2 on a 3-copy topic.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>Write the timeline with offsets: what was acknowledged, when, and by whom?</li><li>Who owns the decision to run an unclean election, and what do they need to know first?</li><li>What is the exact data that was lost, in business terms?</li></ul>
+    <p><button class="btn" type="button" data-writeup="4">Open the write-up builder for drill 4</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-5" data-level="3" data-mods="05" data-title="Lose the controller majority">
+  <summary><span class="dnum">5</span> Lose the controller majority<span class="meta">Level 3 · 40 min · <span data-prog="5">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/05-kraft.html">Module 05</a>.</p>
+    <p><strong>Goal.</strong> Stop two of three controllers and see which operations stop, then restore and read the new epoch.</p>
+    <div class="tools">
+      <div class="sw" data-sw="5"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 5">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 5">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 5"><label class="rubric"><input type="checkbox" data-drill="5" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="5" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="5" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="5" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="5" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="5" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">Read <code>LeaderId</code> first. The module had node 1 as leader. If yours differs, stop that node and run the tools from another one.</p><div class="code"><pre><code>k kafka-metadata-quorum.sh --bootstrap-server $B describe --status
+k kafka-metadata-quorum.sh --bootstrap-server $B describe --replication</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>docker stop kafka-1
+docker exec -i kafka-2 /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server kafka-2:19092 describe --status
+docker exec -i kafka-2 /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-2:19092 \
+  --create --topic during-failover --partitions 1 --replication-factor 2
+
+# now lose the majority
+docker stop kafka-3
+docker exec -i kafka-2 timeout 12 /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-2:19092 \
+  --describe --topic during-failover
+docker exec -i kafka-2 timeout 14 /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-2:19092 \
+  --create --topic no-quorum --partitions 1 --replication-factor 1
+docker logs --since 20s kafka-2 2&gt;&amp;1 | grep -i 'election' | tail -1</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>With one node stopped (module 05, step 4): a new leader in about 1 second, and topic creation works.</p><pre class="out">LeaderId: 2   LeaderEpoch: 4            ← about 1 second after the stop
+
+NodeId  LogEndOffset  Lag   Status
+2       5875          0     Leader
+1       -1            5876  Follower
+3       5875          0     Follower
+
+Created topic during-failover.</pre></div><div class="w"><p>With two nodes stopped (step 5): both commands ran into the time limit, and the log said:</p><pre class="out">INFO [RaftManager id=2] Election timed out before receiving sufficient vote responses to become candidate. …</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Why did one failure change nothing for clients, and two failures stopped topic creation?</li><li>Why did even <code>--describe</code> hang? Which part of the cluster did the tool ask?</li><li>Would a producer that was already writing to a healthy leader have failed? Check the module's mistakes table before you answer.</li><li>Why is the epoch higher after the restore than after the first election?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>docker start kafka-1 kafka-3
+# wait 20 seconds
+k kafka-metadata-quorum.sh --bootstrap-server $B describe --status</code></pre></div><p>The module saw <code>LeaderId: 2</code>, <code>LeaderEpoch: 6</code> and <code>MaxFollowerLag: 0</code>. The failed election attempts each used up an epoch.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What worked, and what did not, with two of three controllers down?</li><li>How would you have found the cause from the logs alone?</li><li>What would you change about controller placement (machines, racks, zones)?</li></ul>
+    <p><button class="btn" type="button" data-writeup="5">Open the write-up builder for drill 5</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-6" data-level="1" data-mods="03" data-title="Rebalance and a dead group member">
+  <summary><span class="dnum">6</span> Rebalance and a dead group member<span class="meta">Level 1 · 35 min · <span data-prog="6">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/03-consumers.html">Module 03</a>.</p>
+    <p><strong>Goal.</strong> Watch partitions move when a member leaves, and compare a clean exit with a kill.</p>
+    <div class="tools">
+      <div class="sw" data-sw="6"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 6">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 6">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 6"><label class="rubric"><input type="checkbox" data-drill="6" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="6" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="6" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="6" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="6" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="6" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic events --partitions 6 --replication-factor 3
+k kafka-producer-perf-test.sh --topic events --num-records 6000 --record-size 100 \
+  --throughput -1 --command-property bootstrap.servers=$B
+docker exec -d kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server $B \
+  --topic events --group g-classic --from-beginning --command-property client.id=c1
+docker exec -d kafka-2 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server $B \
+  --topic events --group g-classic --from-beginning --command-property client.id=c2
+# wait 12 seconds
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic --state</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>docker exec kafka-2 sh -c "pkill -f 'group g-classic'"
+# wait 8 seconds
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic --members</code></pre></div><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: <code>pkill -9</code> on the consumer (a kill with no goodbye), so the group must wait for the 45 second session timeout. The module shows <code>pkill -9</code> only for a transaction drill, and shows only the clean stop for a consumer. Restart c2 first, then time how long <code>#MEMBERS</code> takes to drop.</em></p>
+    <h4>Watch</h4><div class="w"><p>Before (module 03, step 2): each member owns three partitions, strategy <code>range</code>, state <code>Stable</code>, two members.</p><pre class="out">GROUP      COORDINATOR (ID)    ASSIGNMENT-STRATEGY  STATE   #MEMBERS
+g-classic  kafka-1:19092 (1)   range                Stable  2</pre></div><div class="w"><p>After the clean stop (step 4):</p><pre class="out">GROUP      CONSUMER-ID       HOST         CLIENT-ID  #PARTITIONS
+g-classic  c1-7b00d4f1-…     /172.23.0.4  c1         6</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which partitions did the surviving member gain? Did it have to wait for anything?</li><li>Why did the clean stop not need the 45 second session timeout?</li><li>What would a client see during the move: duplicates, a pause, or both?</li><li>The module also ran a group with <code>group.protocol=consumer</code>. What did the strategy name change to, and who now chooses it?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>docker exec kafka-1 sh -c "pkill -f ConsoleConsumer"; docker exec kafka-2 sh -c "pkill -f ConsoleConsumer"
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic</code></pre></div><p>The group then shows no active members. Its lag is whatever was written since.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>How long was the group without a full assignment?</li><li>What did you expect from a kill, and what did you measure?</li><li>Which consumer settings would you tune for a long-running job per record?</li></ul>
+    <p><button class="btn" type="button" data-writeup="6">Open the write-up builder for drill 6</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-7" data-level="2" data-mods="03 09" data-title="Lag and a stuck partition">
+  <summary><span class="dnum">7</span> Lag and a stuck partition<span class="meta">Level 2 · 35 min · <span data-prog="7">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/03-consumers.html">Module 03</a>, <a href="modules/09-operations.html">Module 09</a>.</p>
+    <p><strong>Goal.</strong> Read lag correctly, find the one partition that does not move, and skip it by moving the group's offset forward.</p>
+    <div class="tools">
+      <div class="sw" data-sw="7"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 7">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 7">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 7"><label class="rubric"><input type="checkbox" data-drill="7" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="7" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="7" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="7" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="7" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="7" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: a consumer that crashes on one bad record. No lab has a consumer with code in it. This drill stands in for the stuck record with lag on a stopped group, and teaches the skip. Drill 9 shows a real poison record in Connect.</em></p><div class="code"><pre><code># uses topic events and group g-classic from drill 6
+docker exec kafka-1 sh -c "pkill -f ConsoleConsumer"; docker exec kafka-2 sh -c "pkill -f ConsoleConsumer"
+k kafka-producer-perf-test.sh --topic events --num-records 3000 --record-size 100 \
+  --throughput -1 --command-property bootstrap.servers=$B
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code># the group is stopped, so the lag stays. Read it for every group:
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --all-groups</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>Module 03, step 5. The lag adds up to the 3,000 records written while nobody read:</p><pre class="out">GROUP      TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+g-classic  events  0          1361            1657            296
+g-classic  events  1          592             928             336
+g-classic  events  2          934             1230            296
+g-classic  events  3          592             1184            592
+g-classic  events  4          1480            2072            592
+g-classic  events  5          1041            1929            888</pre></div><div class="w"><p>Look at the plan first, then move one partition. The module shows <code>--dry-run</code>, <code>--execute</code> and <code>--shift-by -100</code>; the last two lines are the module's forms applied to one partition:</p><div class="code"><pre><code>k kafka-consumer-groups.sh --bootstrap-server $B --group g-classic --topic events \
+  --reset-offsets --to-earliest --dry-run
+k kafka-consumer-groups.sh --bootstrap-server $B --group g-classic --topic events:3 \
+  --reset-offsets --shift-by 1 --dry-run
+k kafka-consumer-groups.sh --bootstrap-server $B --group g-classic --topic events:3 \
+  --reset-offsets --shift-by 1 --execute</code></pre></div><pre class="out">GROUP      TOPIC   PARTITION  NEW-OFFSET
+g-classic  events  3          0
+…</pre></div><div class="w"><p>A positive <code>--shift-by</code> and the <code>events:3</code> execute step were not run in the labs. The module also lists <code>--to-latest</code>, <code>--to-datetime</code> and <code>--to-offset</code> as other targets.</p></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which partition has the most lag? Is that the same as the partition that is stuck?</li><li>Why must the group have no active members before a reset?</li><li>What do you lose by skipping a record, and who must agree to that?</li><li>Lag in records is not lag in time. What second number would you ask for?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic</code></pre></div><p>Check that <code>CURRENT-OFFSET</code> moved on partition 3 only. Keep the skipped offset in your write-up: someone will ask for that record later. In production the better repair is a dead-letter topic (drill 9).</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>How did you tell a slow group from a stuck one?</li><li>Which offset did you skip and why was it safe?</li><li>What alert on time since the last commit would have caught this?</li></ul>
+    <p><button class="btn" type="button" data-writeup="7">Open the write-up builder for drill 7</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-8" data-level="2" data-mods="06" data-title="Hanging transaction and read_committed">
+  <summary><span class="dnum">8</span> Hanging transaction and read_committed<span class="meta">Level 2 · 45 min · <span data-prog="8">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/06-transactions.html">Module 06</a>.</p>
+    <p><strong>Goal.</strong> Kill a transactional producer mid-transaction and see a read_committed consumer stop at the open transaction until the coordinator aborts it.</p>
+    <div class="tools">
+      <div class="sw" data-sw="8"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 8">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 8">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 8"><label class="rubric"><input type="checkbox" data-drill="8" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="8" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="8" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="8" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="8" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="8" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic payments --partitions 1 --replication-factor 3
+k kafka-producer-perf-test.sh --topic payments --num-records 30 --record-size 20 --throughput 10 \
+  --transactional-id pay-1 --transaction-duration-ms 1000 --command-property bootstrap.servers=$B
+k kafka-get-offsets.sh --bootstrap-server $B --topic payments</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>docker exec -d kafka-2 /opt/kafka/bin/kafka-producer-perf-test.sh --topic payments \
+  --num-records 100000 --record-size 20 --throughput 5 --transactional-id pay-2 \
+  --transaction-duration-ms 300000 --command-property bootstrap.servers=$B transaction.timeout.ms=40000
+# wait 8 seconds
+docker exec kafka-2 sh -c "pkill -9 -f 'transactional-id pay-2'"
+
+k kafka-transactions.sh --bootstrap-server $B describe --transactional-id pay-2
+for iso in read_uncommitted read_committed; do
+  k kafka-console-consumer.sh --bootstrap-server $B --topic payments --from-beginning \
+    --isolation-level $iso --timeout-ms 5000 2&gt;&amp;1 | tail -1
+done</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>Module 06, step 4. The dead producer wrote 38 records:</p><pre class="out">CoordinatorId  TransactionalId  ProducerId  ProducerEpoch  TransactionState  TransactionTimeoutMs  …  TopicPartitions
+3              pay-2            2000        0              Ongoing           40000                    payments-0
+
+read_uncommitted:  Processed a total of 68 messages
+read_committed:    Processed a total of 30 messages</pre></div><div class="w"><p>Wait until 40 seconds after the transaction began, then (step 5):</p><div class="code"><pre><code>k kafka-transactions.sh --bootstrap-server $B describe --transactional-id pay-2
+k kafka-dump-log.sh --print-data-log --files /tmp/kraft-combined-logs/payments-0/00000000000000000000.log | grep endTxnMarker | tail -1
+k kafka-get-offsets.sh --bootstrap-server $B --topic payments</code></pre></div><pre class="out">… pay-2  2000  …  CompleteAbort
+
+| offset: 71 … endTxnMarker: ABORT coordinatorEpoch: 0
+payments:0:72</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Why did the committed reader stop at 30, and not at 68?</li><li>What would happen to a committed reader of this partition if other producers wrote after the open transaction?</li><li>What decided the moment of cleanup, and where did you read that number?</li><li>The 38 aborted records are still in the log. Who can still read them, and for how long?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>k kafka-transactions.sh --bootstrap-server $B list</code></pre></div><p>No manual repair is shown in the labs: you wait for the timeout (here 40 seconds, set by <code>transaction.timeout.ms</code>). The staff-level repair is a shorter timeout and a stable transactional id, so a restarted producer fences the old one.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>How long was the committed reader blocked, and by what?</li><li>What is the transaction timeout in your applications, and is it right?</li><li>Which consumers in your system read with the default isolation level?</li></ul>
+    <p><button class="btn" type="button" data-writeup="8">Open the write-up builder for drill 8</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-9" data-level="2" data-mods="08 03" data-title="Connect task failure and a dead-letter topic">
+  <summary><span class="dnum">9</span> Connect task failure and a dead-letter topic<span class="meta">Level 2 · 50 min · <span data-prog="9">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/08-ecosystem.html">Module 08</a>, <a href="modules/03-consumers.html">Module 03</a>.</p>
+    <p><strong>Goal.</strong> Feed a bad record to a sink connector, watch the task fail with no data delivered, then route the bad record to a dead-letter topic.</p>
+    <div class="tools">
+      <div class="sw" data-sw="9"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 9">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 9">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 9"><label class="rubric"><input type="checkbox" data-drill="9" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="9" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="9" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="9" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="9" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="9" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><div class="code"><pre><code>docker exec kafka-1 sh -c 'cat &gt; /tmp/connect.properties &lt;&lt;EOF
+bootstrap.servers=kafka-1:19092
+group.id=connect-lab
+key.converter=org.apache.kafka.connect.storage.StringConverter
+value.converter=org.apache.kafka.connect.storage.StringConverter
+offset.storage.topic=connect-offsets
+config.storage.topic=connect-configs
+status.storage.topic=connect-status
+plugin.path=/opt/kafka/libs/connect-file-4.3.1.jar
+listeners=http://0.0.0.0:8083
+EOF'
+docker exec -d kafka-1 sh -c '/opt/kafka/bin/connect-distributed.sh /tmp/connect.properties &gt; /tmp/connect.log 2&gt;&amp;1'
+get()  { docker exec kafka-1 wget -q -O - "http://localhost:8083$1"; }
+post() { docker exec kafka-1 wget -q -O - --header 'Content-Type: application/json' --post-data "$2" "http://localhost:8083$1"; }
+# wait about 20 seconds
+get /</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic json-in --partitions 1 --replication-factor 3
+printf '{"id":1}\nthis is not json\n{"id":2}\n' | k kafka-console-producer.sh --bootstrap-server $B --topic json-in
+
+post /connectors '{"name":"json-strict","config":{"connector.class":"org.apache.kafka.connect.file.FileStreamSinkConnector","tasks.max":"1","file":"/tmp/strict.txt","topics":"json-in","value.converter":"org.apache.kafka.connect.json.JsonConverter","value.converter.schemas.enable":"false"}}'
+# wait 10 seconds
+get /connectors/json-strict/status
+docker exec kafka-1 cat /tmp/strict.txt</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>Module 08, part A, step 3. The connector says <code>RUNNING</code>, the task says <code>FAILED</code>, and the output file is empty:</p><pre class="out">{"name":"json-strict","connector":{"state":"RUNNING",…},
+ "tasks":[{"id":0,"state":"FAILED",…,"trace":"org.apache.kafka.connect.errors.ConnectException: Tolerance exceeded in error handler …
+
+(strict.txt is empty)</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which word in the status output tells you the real state: connector or task?</li><li>The two good records were not delivered. Why not?</li><li>Which consumer group tracks this sink? Which module 03 command shows its lag?</li><li>Is a dead-letter topic always right? What does it hide?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>post /connectors '{"name":"json-dlq","config":{"connector.class":"org.apache.kafka.connect.file.FileStreamSinkConnector","tasks.max":"1","file":"/tmp/dlq-ok.txt","topics":"json-in","value.converter":"org.apache.kafka.connect.json.JsonConverter","value.converter.schemas.enable":"false","errors.tolerance":"all","errors.deadletterqueue.topic.name":"json-in-dlq","errors.deadletterqueue.topic.replication.factor":"3","errors.deadletterqueue.context.headers.enable":"true"}}'
+# wait 12 seconds
+get /connectors/json-dlq/status
+docker exec kafka-1 cat /tmp/dlq-ok.txt
+k kafka-console-consumer.sh --bootstrap-server $B --topic json-in-dlq --from-beginning \
+  --formatter-property print.headers=true --timeout-ms 6000</code></pre></div><p>The module saw <code>{id=1}</code> and <code>{id=2}</code> delivered, and the bad record in the dead-letter topic with headers naming topic <code>json-in</code>, partition 0, offset 1, and the stage <code>VALUE_CONVERTER</code>. When done: <code>docker exec kafka-1 sh -c "pkill -f ConnectDistributed"</code>.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What did monitoring show: nothing, or a failed task?</li><li>What do you do with the records in the dead-letter topic, and who owns that?</li><li>Which alert would you add on task state?</li></ul>
+    <p><button class="btn" type="button" data-writeup="9">Open the write-up builder for drill 9</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-10" data-level="1" data-mods="08" data-title="An incompatible schema change">
+  <summary><span class="dnum">10</span> An incompatible schema change<span class="meta">Level 1 · 35 min · <span data-prog="10">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/08-ecosystem.html">Module 08</a>.</p>
+    <p><strong>Goal.</strong> Try to register a schema that old data cannot satisfy, read the refusal, and test changes without registering them.</p>
+    <div class="tools">
+      <div class="sw" data-sw="10"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 10">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 10">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 10"><label class="rubric"><input type="checkbox" data-drill="10" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="10" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="10" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="10" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="10" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="10" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">Run this on your own machine, not inside a container: the registry listens on port 8086 and the module uses <code>curl</code>.</p><div class="code"><pre><code>docker compose up -d schema-registry
+R=http://localhost:8086
+H='Content-Type: application/vnd.schemaregistry.v1+json'
+curl -s $R/config
+
+V1='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"amount\",\"type\":\"double\"}]}"}'
+V2='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"amount\",\"type\":\"double\"},{\"name\":\"currency\",\"type\":\"string\",\"default\":\"CAD\"}]}"}'
+V3='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"amount\",\"type\":\"double\"},{\"name\":\"currency\",\"type\":\"string\",\"default\":\"CAD\"},{\"name\":\"customerId\",\"type\":\"string\"}]}"}'
+curl -s -X POST -H "$H" -d "$V1" $R/subjects/orders-value/versions
+curl -s -X POST -H "$H" -d "$V2" $R/subjects/orders-value/versions</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>curl -s -X POST -H "$H" -d "$V3" $R/subjects/orders-value/versions
+curl -s $R/subjects/orders-value/versions</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>Module 08, part B, step 2:</p><pre class="out">{"error_code":40901,"message":"Schema being registered is incompatible with an earlier schema for subject
+ "orders-value", details: [{errorType:'READER_FIELD_MISSING_DEFAULT_VALUE', description:'The field
+ 'customerId' at path '/fields/3' in the new schema has no default value and is missing in the old schema' …
+[1,2]</pre></div><div class="w"><p>Then test version 4 (removes <code>amount</code>) under <code>BACKWARD</code>, switch to <code>FULL</code> and test again (step 3):</p><div class="code"><pre><code>V4='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"currency\",\"type\":\"string\",\"default\":\"CAD\"}]}"}'
+curl -s -X POST -H "$H" -d "$V4" "$R/compatibility/subjects/orders-value/versions/latest?verbose=true"
+curl -s -X PUT -H "$H" -d '{"compatibility":"FULL"}' $R/config/orders-value
+curl -s -X POST -H "$H" -d "$V4" "$R/compatibility/subjects/orders-value/versions/latest?verbose=true"</code></pre></div><pre class="out">{"is_compatible":true,"messages":[]}
+
+{"compatibility":"FULL"}
+{"is_compatible":false,"messages":["{errorType:'READER_FIELD_MISSING_DEFAULT_VALUE', description:'The field
+ 'amount' at path '/fields/1' in the old schema has no default value and is missing in the new schema' …</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which field did the registry object to, and what does "no default value" mean for an old record?</li><li>Whose job is it to prevent this: the producer team, the registry, or the build pipeline?</li><li>Why is removing <code>amount</code> allowed under <code>BACKWARD</code> and refused under <code>FULL</code>?</li><li>What would have happened with no registry in the way?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --describe --topic _schemas | head -1</code></pre></div><p>Nothing was damaged: the registry refused the change. The repair is to give <code>customerId</code> a default and test it with the compatibility call. Registering that fixed version was not run in the labs. Then set the subject back with the same <code>PUT</code> to the mode you want.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What did the refusal say, in your own words?</li><li>Where in your release process would the test call run?</li><li>Which compatibility mode does each of your subjects use, and why?</li></ul>
+    <p><button class="btn" type="button" data-writeup="10">Open the write-up builder for drill 10</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-11" data-level="2" data-mods="09 02" data-title="A noisy client and quotas">
+  <summary><span class="dnum">11</span> A noisy client and quotas<span class="meta">Level 2 · 40 min · <span data-prog="11">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/09-operations.html">Module 09</a>, <a href="modules/02-producers.html">Module 02</a>.</p>
+    <p><strong>Goal.</strong> Put a byte-rate quota on one client, compare it with an unlimited one, and learn why a short test shows almost no throttling.</p>
+    <div class="tools">
+      <div class="sw" data-sw="11"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 11">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 11">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 11"><label class="rubric"><input type="checkbox" data-drill="11" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="11" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="11" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="11" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="11" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="11" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">The topic <code>perf</code> comes from module 02. Skip the create line if it exists.</p><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic perf --partitions 3 --replication-factor 3
+k kafka-configs.sh --bootstrap-server $B --alter --add-config 'producer_byte_rate=5242880' \
+  --entity-type clients --entity-name slow-client</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>k kafka-producer-perf-test.sh --topic perf --num-records 400000 --record-size 200 --throughput -1 \
+  --command-property bootstrap.servers=$B client.id=slow-client
+k kafka-producer-perf-test.sh --topic perf --num-records 400000 --record-size 200 --throughput -1 \
+  --command-property bootstrap.servers=$B client.id=fast-client</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>Module 09, step 5. Read the last two lines of each run:</p><pre class="out">Client        Quota               MB each second   Average latency
+slow-client   5 MiB each second   21.64            973 ms
+fast-client   none                39.03            422 ms</pre></div><div class="w"><p>The lesson. The limited client still averaged four times its quota. The test sent 80 MB in under 4 seconds, and the broker measures over an 11-second window, so most of it was an allowed burst. In the module, runs of 6 MB and 20 MB showed no slowing at all.</p></div><div class="w"><p>To see the steady limit you need a run that lasts a minute or more.</p></div><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: a longer run. Raise <code>--num-records</code> until the run lasts a minute or more, then compare MB each second with the quota. The module only says this is the way to do it.</em></p>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Why did the quota not reject anything? What does a quota do instead?</li><li>Why did a short test mislead? Give the window length and the test length.</li><li>Which numbers would you collect from a real noisy client before setting its quota?</li><li>Who should be told when you throttle a client, and how will they find out?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>k kafka-configs.sh --bootstrap-server $B --alter --delete-config producer_byte_rate \
+  --entity-type clients --entity-name slow-client</code></pre></div><p>Always remove the test quota. Quotas live in the cluster until someone deletes them.</p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What did the first short test show, and why was that wrong?</li><li>What quota would you set, and how long would you test it?</li><li>What does the client team see when throttled?</li></ul>
+    <p><button class="btn" type="button" data-writeup="11">Open the write-up builder for drill 11</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-12" data-level="1" data-mods="09 01 02" data-title="Adding partitions moves a key">
+  <summary><span class="dnum">12</span> Adding partitions moves a key<span class="meta">Level 1 · 30 min · <span data-prog="12">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/09-operations.html">Module 09</a>, <a href="modules/01-the-log.html">Module 01</a>, <a href="modules/02-producers.html">Module 02</a>.</p>
+    <p><strong>Goal.</strong> Add partitions to a live topic and see one key land in a different partition, which breaks per-key order.</p>
+    <div class="tools">
+      <div class="sw" data-sw="12"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 12">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 12">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 12"><label class="rubric"><input type="checkbox" data-drill="12" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="12" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="12" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="12" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="12" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="12" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">These are example records written for this drill. Module 01 builds the same topic; skip the create line if <code>orders</code> exists.</p><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server kafka-1:19092 --create --topic orders --partitions 3 --replication-factor 3
+printf 'user-42:created\nuser-42:paid\nuser-42:shipped\nuser-17:created\nuser-1:created\n' | \
+  k kafka-console-producer.sh --bootstrap-server $B --topic orders \
+  --reader-property parse.key=true --reader-property key.separator=:</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --alter --topic orders --partitions 6
+printf 'user-42:after-change\nuser-17:after-change\nuser-1:after-change\n' | \
+  k kafka-console-producer.sh --bootstrap-server $B --topic orders \
+  --reader-property parse.key=true --reader-property key.separator=:
+k kafka-console-consumer.sh --bootstrap-server $B --topic orders --from-beginning \
+  --formatter-property print.key=true --formatter-property print.partition=true \
+  --formatter-property print.offset=true --timeout-ms 6000</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>Module 09, step 4, sorted by key. Your offsets will differ. The partition for each key depends only on the key and the partition count, so the partition numbers should match.</p><pre class="out">Partition:2  Offset:0   user-1   created
+Partition:2  Offset:2   user-1   after-change
+Partition:0  Offset:0   user-17  created
+Partition:0  Offset:11  user-17  after-change
+Partition:1  Offset:0   user-42  created
+Partition:1  Offset:1   user-42  paid
+Partition:1  Offset:2   user-42  shipped
+Partition:4  Offset:0   user-42  after-change      ← the same key, a different partition</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which key moved? Which two partitions now hold its story?</li><li>What does that do to a consumer that needs all events for one customer in order?</li><li>Why did the other keys not move?</li><li>Can you now go back to 3 partitions? Try the alter command and read the error.</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --alter --topic orders --partitions 3</code></pre></div><p>Module 09 saw: "The topic orders currently has 6 partition(s); 3 would not be an increase." You cannot undo it.</p><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: the real repair. The usual plan is a new topic with the final partition count, then a copy and a switch for producers and consumers. The module does not run it.</em></p>
+    <h4>Write-up prompts</h4>
+    <ul><li>Which events could have been processed out of order, and what was the business effect?</li><li>What rule would stop a team adding partitions to a keyed topic casually?</li><li>How many partitions will you size for next time?</li></ul>
+    <p><button class="btn" type="button" data-writeup="12">Open the write-up builder for drill 12</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-13" data-level="2" data-mods="09 01" data-title="The disk fills">
+  <summary><span class="dnum">13</span> The disk fills<span class="meta">Level 2 · 50 min · <span data-prog="13">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/09-operations.html">Module 09</a>, <a href="modules/01-the-log.html">Module 01</a>.</p>
+    <p><strong>Goal.</strong> Find the topics that use the disk, then free space the supported way by lowering retention and waiting for the check. Do not delete files by hand.</p>
+    <div class="tools">
+      <div class="sw" data-sw="13"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 13">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 13">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 13"><label class="rubric"><input type="checkbox" data-drill="13" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="13" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="13" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="13" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="13" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="13" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">Module 01 made five 1 MiB segments this way.</p><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server kafka-1:19092 --create --topic rolls \
+  --partitions 1 --replication-factor 3 --config segment.bytes=1048576
+k kafka-producer-perf-test.sh --topic rolls --num-records 20000 --record-size 200 \
+  --throughput -1 --command-property bootstrap.servers=kafka-1:19092
+docker exec kafka-1 ls /tmp/kraft-combined-logs/rolls-0</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code># the filling step itself: not run in the labs
+# (fill the disk of one broker; module 09 gives no command for it)</code></pre></div><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: filling a broker's disk. Do not attempt it on a laptop shared with other work. The modules support only the steps before and after the fill.</em></p>
+    <h4>Watch</h4><div class="w"><p>Where did the disk go? (module 09, step 2). Output reduced to partition and size in bytes:</p><div class="code"><pre><code>k kafka-log-dirs.sh --bootstrap-server $B --describe --broker-list 1 --topic-list perf,comp-none,orders,rolls</code></pre></div><pre class="out">perf-0        247910144
+perf-2        241752474
+perf-1        237756878
+comp-none-0     1548818
+orders-0            713
+orders-2            159</pre></div><div class="w"><p>Free space by lowering retention on the largest topic, then wait up to 6 minutes: 1 minute of retention plus the 5-minute check (module 01, step 7):</p><div class="code"><pre><code>k kafka-configs.sh --bootstrap-server kafka-1:19092 --alter \
+  --entity-type topics --entity-name rolls --add-config retention.ms=60000
+# wait up to 6 minutes
+docker exec kafka-1 ls /tmp/kraft-combined-logs/rolls-0
+k kafka-get-offsets.sh --bootstrap-server kafka-1:19092 --topic rolls --time earliest</code></pre></div><pre class="out">00000000000000000000.log.deleted
+00000000000000004992.log.deleted
+…
+00000000000000019968.log.deleted
+rolls:0:20000</pre></div><div class="w"><p>Module 01 saw whole files marked <code>.deleted</code> for one minute before they disappeared, and the earliest offset moved from 0 to 20000. The active segment went too, because it had also expired.</p></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which topics use the most space on broker 1? What would you ask their owners?</li><li>Why did the space not come back at once after you lowered retention?</li><li>Why must you not delete segment files by hand?</li><li>Which thresholds would you alert on before the disk is full? Check the module for the two values.</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>k kafka-configs.sh --bootstrap-server kafka-1:19092 --alter \
+  --entity-type topics --entity-name rolls --delete-config retention.ms</code></pre></div><p>Put retention back to its normal value after the emergency. <code>--delete-config</code> returns a setting to its default. Module 09 uses it for a client quota (drill 11).</p><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: <code>--delete-config retention.ms</code> on a topic. The module uses the flag only for quotas.</em></p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What was the first sign, and how late was it?</li><li>How much data did you give up by lowering retention, and who approved it?</li><li>What limit would you set so no single topic can fill a disk?</li></ul>
+    <p><button class="btn" type="button" data-writeup="13">Open the write-up builder for drill 13</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-14" data-level="3" data-mods="10 06 03" data-title="MirrorMaker failover to the second cluster">
+  <summary><span class="dnum">14</span> MirrorMaker failover to the second cluster<span class="meta">Level 3 · 60 min · <span data-prog="14">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/10-multi-cluster.html">Module 10</a>, <a href="modules/06-transactions.html">Module 06</a>, <a href="modules/03-consumers.html">Module 03</a>.</p>
+    <p><strong>Goal.</strong> Start the copy to the second cluster, compare offsets, read translated group offsets, and find that aborted records were copied as normal records.</p>
+    <div class="tools">
+      <div class="sw" data-sw="14"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 14">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 14">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 14"><label class="rubric"><input type="checkbox" data-drill="14" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="14" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="14" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="14" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="14" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="14" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">The group <code>g-new</code> comes from module 03, step 3. Without it, the last two commands show nothing.</p><div class="code"><pre><code># do drill 8 first, so payments has an aborted transaction
+docker compose up -d kafka-dr
+dr() { docker exec -i kafka-dr /opt/kafka/bin/"$@"; }
+D=kafka-dr:19092
+
+docker exec kafka-1 sh -c 'cat &gt; /tmp/mm2.properties &lt;&lt;EOF
+clusters = main, dr
+main.bootstrap.servers = kafka-1:19092
+dr.bootstrap.servers = kafka-dr:19092
+main-&gt;dr.enabled = true
+main-&gt;dr.topics = orders|payments|events
+dr-&gt;main.enabled = false
+groups = g-.*
+replication.factor = 1
+checkpoints.topic.replication.factor = 1
+heartbeats.topic.replication.factor = 1
+offset-syncs.topic.replication.factor = 1
+offset.storage.replication.factor = 1
+status.storage.replication.factor = 1
+config.storage.replication.factor = 1
+sync.group.offsets.enabled = true
+emit.checkpoints.interval.seconds = 10
+sync.group.offsets.interval.seconds = 10
+refresh.topics.interval.seconds = 10
+refresh.groups.interval.seconds = 10
+EOF'
+docker exec -d kafka-1 sh -c '/opt/kafka/bin/connect-mirror-maker.sh /tmp/mm2.properties &gt; /tmp/mm2.log 2&gt;&amp;1'
+# wait about 45 seconds
+dr kafka-topics.sh --bootstrap-server $D --list</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>k  kafka-get-offsets.sh --bootstrap-server $B --topic payments
+dr kafka-get-offsets.sh --bootstrap-server $D --topic main.payments
+k  kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-new
+dr kafka-consumer-groups.sh --bootstrap-server $D --describe --group g-new</code></pre></div><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: the failover itself: stop the copy with <code>docker exec kafka-1 sh -c "pkill -f MirrorMaker; pkill -f ConnectDistributed"</code>, write records to <code>orders</code> on the main cluster, and count what is missing on <code>main.orders</code>. The module shows that command only as clean-up.</em></p>
+    <h4>Watch</h4><div class="w"><p>Module 10, part B, step 2. The offsets for <code>payments</code> differ by 5:</p><pre class="out">payments:0:78
+main.payments:0:73</pre></div><div class="w"><p>Step 4. The group never ran on the second cluster, yet has offsets there, behind the source:</p><pre class="out">on main:   g-new  events       0  CURRENT-OFFSET 1261  LOG-END-OFFSET 1657  LAG 396
+on dr:     g-new  main.events  0  CURRENT-OFFSET 1112  LOG-END-OFFSET 1657  LAG 545</pre></div><div class="w"><p>The module found that the source held 73 data records and 5 transaction markers. Of the 73, 38 belonged to the aborted transaction from module 06. They were copied as ordinary records, and the markers were not. Your counts depend on what you ran in drill 8.</p></div><div class="w"><p>Step 3 measured the delay between clusters at about 2 seconds:</p><pre class="out">main.orders:0:12   →   main.orders:0:13     about 2 seconds later</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>If <code>g-new</code> failed over now, how many records of partition 0 would it read twice, and would it miss any?</li><li>Why do the offsets differ for <code>payments</code> but match for <code>orders</code>?</li><li>Why does a reader of <code>main.payments</code> see records that were rolled back on the main cluster?</li><li>If the main cluster were lost now, which acknowledged records might not exist on the second cluster?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>docker exec kafka-1 sh -c "pkill -f MirrorMaker; pkill -f ConnectDistributed"
+docker compose down        # stop every container; the labs keep no data after this</code></pre></div><p>The module names the fix for aborted records as setting the source consumer's isolation level to <code>read_committed</code> in the MirrorMaker 2 configuration for flows that carry transactional topics. The module marks it unverified.</p><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: that setting. The exact property name is not shown in the module, and the lab was not rerun with it. Look it up before you use it.</em></p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What is your recovery point: how many seconds of data could the second cluster lack?</li><li>How would a consumer on the second cluster know where to start?</li><li>What would you do about aborted records in the copy?</li></ul>
+    <p><button class="btn" type="button" data-writeup="14">Open the write-up builder for drill 14</button></p>
+  </div>
+</details>
+
+<details class="qa drill" id="drill-15" data-level="2" data-mods="11" data-title="Secured cluster: password, truststore, ACL">
+  <summary><span class="dnum">15</span> Secured cluster: password, truststore, ACL<span class="meta">Level 2 · 45 min · <span data-prog="15">0/6</span> done</span></summary>
+  <div class="answer">
+    <p class="small">Builds on: <a href="modules/11-security-lab.html">Module 11</a>.</p>
+    <p><strong>Goal.</strong> Meet the three common client failures on a secured cluster: wrong password, missing truststore, and missing permission. Read each one correctly.</p>
+    <div class="tools">
+      <div class="sw" data-sw="15"><span class="sw-time" data-sw-time>00:00</span>
+        <button class="btn" type="button" data-sw-toggle aria-label="Start stopwatch for drill 15">Start</button>
+        <button class="btn" type="button" data-sw-reset aria-label="Reset stopwatch for drill 15">Reset</button></div>
+      <div class="steps" role="group" aria-label="Progress for drill 15"><label class="rubric"><input type="checkbox" data-drill="15" data-step="0"><span>Set up</span></label><label class="rubric"><input type="checkbox" data-drill="15" data-step="1"><span>Broke it</span></label><label class="rubric"><input type="checkbox" data-drill="15" data-step="2"><span>Answered the questions</span></label><label class="rubric"><input type="checkbox" data-drill="15" data-step="3"><span>Repaired</span></label><label class="rubric"><input type="checkbox" data-drill="15" data-step="4"><span>Health checks clean</span></label><label class="rubric"><input type="checkbox" data-drill="15" data-step="5"><span>Wrote it up</span></label></div>
+    </div>
+    <h4>Setup</h4><p class="small">This is the separate cluster in <code>secure/</code>, not the main one. It has its own health check: the list command below, run as admin.</p><div class="code"><pre><code>cd ~/Desktop/kafka-knowledge-base/secure
+sh make-certs.sh
+docker compose up -d
+docker logs kafka-sec 2&gt;&amp;1 | grep 'Kafka Server started'
+
+s() { docker exec -i kafka-sec timeout 25 /opt/kafka/bin/"$@"; }
+S=kafka-sec:9094
+A=/clients/admin.properties
+s kafka-topics.sh --bootstrap-server $S --command-config $A --create --topic payments-sec --partitions 1 --replication-factor 1
+s kafka-acls.sh --bootstrap-server $S --command-config $A --add --allow-principal User:alice --producer --topic payments-sec
+s kafka-acls.sh --bootstrap-server $S --command-config $A --add --allow-principal User:bob --consumer --topic payments-sec --group billing</code></pre></div>
+    <h4>Break it</h4><div class="code"><pre><code>s kafka-topics.sh --bootstrap-server $S --command-config /clients/plaintext.properties --list
+s kafka-topics.sh --bootstrap-server $S --command-config /clients/no-truststore.properties --list
+s kafka-topics.sh --bootstrap-server $S --command-config /clients/wrong-password.properties --list
+s kafka-topics.sh --bootstrap-server $S --command-config /clients/alice.properties \
+  --create --topic alice-topic --partitions 1 --replication-factor 1
+s kafka-console-consumer.sh --bootstrap-server $S --command-config /clients/alice.properties --topic payments-sec --group snoop --from-beginning --timeout-ms 6000</code></pre></div>
+    <h4>Watch</h4><div class="w"><p>Module 11, steps 3, 4 and 6. Read each error:</p><pre class="out">1. ERROR Uncaught exception in thread 'kafka-admin-client-thread' … java.lang.OutOfMemoryError: Java heap space
+2. ERROR … failed authentication due to: SSL handshake failed
+   org.apache.kafka.common.errors.SslAuthenticationException: SSL handshake failed
+3. ERROR … failed authentication due to: Authentication failed: Invalid username or password
+alice create:  Error while executing topic command : Authorization failed.
+alice read:    GroupAuthorizationException: Not authorized to access group: snoop</pre></div><div class="w"><p>The authorizer log names the user, the operation and the rule (step 7):</p><div class="code"><pre><code>docker exec kafka-sec sh -c 'grep -i denied /opt/kafka/logs/kafka-authorizer.log | tail -3'</code></pre></div><pre class="out">INFO Principal = User:alice is Denied operation = DESCRIBE … on resource = Group:LITERAL:snoop for request = FindCoordinator … based on rule DefaultDeny</pre></div>
+    <h4>Questions to answer before you repair</h4>
+    <ol><li>Which of the three failures is an authentication problem, and which is authorization? How do the messages differ?</li><li>The plain client got an out-of-memory error. Why is that message misleading?</li><li>An empty topic list was returned to alice. Is the list empty, or is alice not allowed to see it?</li><li>Why is making the application a super user the wrong fix?</li></ol>
+    <h4>Repair</h4><div class="code"><pre><code>s kafka-acls.sh --bootstrap-server $S --command-config $A --list
+s kafka-topics.sh --bootstrap-server $S --command-config $A --list</code></pre></div><p>For the missing permission, add a rule with the same <code>--consumer</code> form as bob's, naming alice and group <code>snoop</code>. For the others, fix the client file, not the broker. When finished: <code>docker compose down</code> in the <code>secure</code> folder.</p><p><span class="tag-unverified">unverified</span> <em>Not run in the labs: the alice rule for <code>snoop</code>. It uses the same command form as module 11 with another principal and group.</em></p>
+    <h4>Write-up prompts</h4>
+    <ul><li>What did each failure look like to an application team, and how would they misread it?</li><li>Which log line did you use to find the cause?</li><li>What would a runbook line say for each of the three?</li></ul>
+    <p><button class="btn" type="button" data-writeup="15">Open the write-up builder for drill 15</button></p>
+  </div>
+</details>
+
+<h2 id="writeup">Write-up builder</h2>
+<div class="lab-panel">
+  <p>Fill the fields and copy a post-incident report in Markdown. <strong>Nothing is sent anywhere.</strong> The text stays in this page until you copy it.</p>
+  <div class="form">
+    <label for="w-drill">Drill</label>
+    <select id="w-drill"><option value="">Choose a drill</option><option value="1">1. Stop a follower: clean stop or kill</option><option value="2">2. Below the in-sync minimum with acks=all</option><option value="3">3. Leader failure and leader epochs</option><option value="4">4. Unclean election and lost records</option><option value="5">5. Lose the controller majority</option><option value="6">6. Rebalance and a dead group member</option><option value="7">7. Lag and a stuck partition</option><option value="8">8. Hanging transaction and read_committed</option><option value="9">9. Connect task failure and a dead-letter topic</option><option value="10">10. An incompatible schema change</option><option value="11">11. A noisy client and quotas</option><option value="12">12. Adding partitions moves a key</option><option value="13">13. The disk fills</option><option value="14">14. MirrorMaker failover to the second cluster</option><option value="15">15. Secured cluster: password, truststore, ACL</option></select>
+    <label for="w-saw">What I saw</label>
+    <textarea class="answer" id="w-saw" rows="3"></textarea>
+    <label for="w-decided">What I decided</label>
+    <textarea class="answer" id="w-decided" rows="3"></textarea>
+    <label for="w-wrong">What I got wrong</label>
+    <textarea class="answer" id="w-wrong" rows="3"></textarea>
+    <label for="w-changed">What I changed</label>
+    <textarea class="answer" id="w-changed" rows="3"></textarea>
+    <label for="w-number">The number that mattered</label>
+    <input type="text" id="w-number" class="answer" placeholder="For example: 12 seconds to leave the in-sync set">
+  </div>
+  <div class="controls">
+    <button class="btn primary" type="button" id="w-copy">Copy report as Markdown</button>
+    <span id="w-status" role="status" aria-live="polite"></span>
+  </div>
+  <label for="w-preview">Preview</label>
+  <textarea class="answer" id="w-preview" rows="10" readonly></textarea>
+</div>
+
+</div>
+</main>
+<script src="assets/kb.js"></script>
+<script>
+(function () {
+  var KEY = 'kb-drills';
+  var STEPS = 6;
+  var state = {};
+  function load() {
+    try { var raw = localStorage.getItem(KEY); if (raw) state = JSON.parse(raw) || {}; } catch (e) { state = {}; }
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* storage blocked: progress lasts for this page view only */ }
+  }
+  function entry(id) {
+    if (!state[id] || !Array.isArray(state[id].s)) state[id] = { s: [], t: (state[id] && state[id].t) || 0 };
+    return state[id];
+  }
+  function fmt(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  var cards = Array.prototype.slice.call(document.querySelectorAll('details.drill'));
+  var rows = Array.prototype.slice.call(document.querySelectorAll('tbody tr[data-level]'));
+
+  // ---------- progress checklist ----------
+  function countDone(id) {
+    var s = entry(id).s, n = 0;
+    for (var i = 0; i < STEPS; i++) if (s[i]) n++;
+    return n;
+  }
+  function refreshProgress() {
+    var finished = 0;
+    cards.forEach(function (card) {
+      var id = card.id.replace('drill-', '');
+      var n = countDone(id);
+      if (n === STEPS) finished++;
+      var a = card.querySelector('[data-prog]'); if (a) a.textContent = n + '/' + STEPS;
+      var b = document.querySelector('[data-done="' + id + '"]'); if (b) b.textContent = n + '/' + STEPS;
+    });
+    document.getElementById('finished').textContent = finished;
+  }
+  load();
+  Array.prototype.forEach.call(document.querySelectorAll('input[data-drill]'), function (box) {
+    var id = box.getAttribute('data-drill'), step = +box.getAttribute('data-step');
+    box.checked = !!entry(id).s[step];
+    box.addEventListener('change', function () {
+      entry(id).s[step] = box.checked;
+      save();
+      refreshProgress();
+    });
+  });
+  refreshProgress();
+
+  // ---------- stopwatch ----------
+  Array.prototype.forEach.call(document.querySelectorAll('[data-sw]'), function (box) {
+    var id = box.getAttribute('data-sw');
+    var disp = box.querySelector('[data-sw-time]');
+    var toggle = box.querySelector('[data-sw-toggle]');
+    var reset = box.querySelector('[data-sw-reset]');
+    var elapsed = entry(id).t || 0;  // seconds banked when stopped
+    var startedAt = 0, timer = null;
+    function now() { return elapsed + (startedAt ? (Date.now() - startedAt) / 1000 : 0); }
+    function draw() { disp.textContent = fmt(now()); }
+    draw();
+    toggle.addEventListener('click', function () {
+      if (timer) {
+        elapsed = now(); startedAt = 0;
+        clearInterval(timer); timer = null;
+        entry(id).t = Math.floor(elapsed); save();
+        toggle.textContent = 'Start';
+        toggle.setAttribute('aria-label', 'Start stopwatch for drill ' + id);
+      } else {
+        startedAt = Date.now();
+        timer = setInterval(draw, 250);
+        toggle.textContent = 'Stop';
+        toggle.setAttribute('aria-label', 'Stop stopwatch for drill ' + id);
+      }
+      draw();
+    });
+    reset.addEventListener('click', function () {
+      if (timer) { clearInterval(timer); timer = null; }
+      elapsed = 0; startedAt = 0;
+      entry(id).t = 0; save();
+      toggle.textContent = 'Start';
+      toggle.setAttribute('aria-label', 'Start stopwatch for drill ' + id);
+      draw();
+    });
+  });
+
+  // ---------- filters ----------
+  var level = '0', mod = '';
+  var seg = document.getElementById('lvl-seg');
+  var modSel = document.getElementById('mod-filter');
+  function applyFilter() {
+    var shown = 0;
+    function ok(el) {
+      var okL = level === '0' || el.getAttribute('data-level') === level;
+      var okM = !mod || (' ' + el.getAttribute('data-mods') + ' ').indexOf(' ' + mod + ' ') !== -1;
+      return okL && okM;
+    }
+    cards.forEach(function (c) { var v = ok(c); c.hidden = !v; if (v) shown++; });
+    rows.forEach(function (r) { r.hidden = !ok(r); });
+    document.getElementById('shown').textContent = shown;
+    var msg = shown === cards.length ? 'Showing all ' + cards.length + ' drills.'
+      : shown === 0 ? 'No drill matches. Change the level or the module.'
+      : 'Showing ' + shown + ' of ' + cards.length + ' drills.';
+    document.getElementById('filter-msg').textContent = msg;
+  }
+  seg.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-level]');
+    if (!b) return;
+    level = b.getAttribute('data-level');
+    Array.prototype.forEach.call(seg.querySelectorAll('button'), function (x) {
+      x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+    });
+    applyFilter();
+  });
+  modSel.addEventListener('change', function () { mod = modSel.value; applyFilter(); });
+
+  // ---------- open a drill from the table or the address ----------
+  function openFromHash() {
+    var h = location.hash;
+    if (!h || h.indexOf('#drill-') !== 0) return;
+    var c = document.getElementById(h.slice(1));
+    if (!c) return;
+    if (c.hidden) {
+      level = '0'; mod = ''; modSel.value = '';
+      Array.prototype.forEach.call(seg.querySelectorAll('button'), function (x) {
+        x.setAttribute('aria-pressed', x.getAttribute('data-level') === '0' ? 'true' : 'false');
+      });
+      applyFilter();
+    }
+    c.open = true;
+    c.scrollIntoView({ block: 'start' });
+  }
+  window.addEventListener('hashchange', openFromHash);
+  openFromHash();
+
+  // ---------- write-up builder ----------
+  var f = {
+    drill: document.getElementById('w-drill'), saw: document.getElementById('w-saw'),
+    decided: document.getElementById('w-decided'), wrong: document.getElementById('w-wrong'),
+    changed: document.getElementById('w-changed'), number: document.getElementById('w-number'),
+  };
+  var preview = document.getElementById('w-preview');
+  var status = document.getElementById('w-status');
+  function val(el) { var v = el.value.trim(); return v || '(not filled in)'; }
+  function build() {
+    var id = f.drill.value;
+    var title = id ? document.getElementById('drill-' + id).getAttribute('data-title') : '(no drill chosen)';
+    var lines = ['# Post-incident report: drill ' + (id || '?') + ', ' + title, ''];
+    var t = id ? (entry(id).t || 0) : 0;
+    var d = new Date();
+    var date = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+    lines.push('Date: ' + date);
+    if (t) lines.push('Time on the stopwatch: ' + fmt(t));
+    lines.push('', '## What I saw', val(f.saw), '', '## What I decided', val(f.decided), '',
+      '## What I got wrong', val(f.wrong), '', '## What I changed', val(f.changed), '',
+      '## The number that mattered', val(f.number), '');
+    return lines.join('\n');
+  }
+  function refresh() { preview.value = build(); }
+  Object.keys(f).forEach(function (k) {
+    f[k].addEventListener('input', refresh);
+    f[k].addEventListener('change', refresh);
+  });
+  refresh();
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.left = '-9999px'; ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var okc = false;
+    try { okc = document.execCommand('copy'); } catch (e) { okc = false; }
+    document.body.removeChild(ta);
+    return okc;
+  }
+  function say(msg) {
+    status.textContent = msg;
+    setTimeout(function () { status.textContent = ''; }, 3000);
+  }
+  document.getElementById('w-copy').addEventListener('click', function () {
+    refresh();
+    var text = preview.value;
+    function fail() { preview.focus(); preview.select(); say('Copy blocked. The text is selected: press Ctrl+C or Cmd+C.'); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { say('Copied.'); }, function () {
+        if (fallbackCopy(text)) say('Copied.'); else fail();
+      });
+    } else if (fallbackCopy(text)) say('Copied.'); else fail();
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-writeup]'), function (b) {
+    b.addEventListener('click', function () {
+      f.drill.value = b.getAttribute('data-writeup');
+      refresh();
+      var sec = document.getElementById('writeup');
+      sec.scrollIntoView({ behavior: (typeof KB !== 'undefined' && KB.reducedMotion) ? 'auto' : 'smooth', block: 'start' });
+      f.saw.focus({ preventScroll: true });
+    });
+  });
+})();
+
+</script>
+</body>
+</html>

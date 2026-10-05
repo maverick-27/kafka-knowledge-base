@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12 Monitoring lab · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .sig { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .6rem; margin: 1rem 0; }
+  .sig .stat { transition: border-color .3s, background .3s; }
+  .sig .stat.alarm { border-color: var(--gone); background: var(--gone-soft); }
+  .sig .stat.fine { border-color: var(--read); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 12 Monitoring lab</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 12 · Depth lab · Kafka 4.3</div>
+  <h1>Monitoring lab</h1>
+  <p class="lede">Module 09 listed the signals to watch but could not read them. This lab opens the brokers' metrics, reads each signal by its real name, runs Prometheus with alert rules, and stops a broker to watch the alerts fire and clear.</p>
+
+  <div class="lab-panel" id="sig-demo" style="margin:0">
+    <h3>Try it: read the dashboard, name the problem</h3>
+    <p class="hint">Pick a situation. The six tiles change to the values you would see. Decide what is wrong before you read the explanation.</p>
+    <div class="controls">
+      <label for="sg-case">Situation</label>
+      <select id="sg-case">
+        <option value="ok">A normal day</option>
+        <option value="down">One of three brokers is stopped</option>
+        <option value="two">Two of three brokers are stopped</option>
+        <option value="slow">One follower has a slow disk</option>
+        <option value="noctl">No controller majority</option>
+        <option value="busy">Request threads are saturated</option>
+      </select>
+    </div>
+    <div class="sig" id="sg-tiles"></div>
+    <div class="readout" id="sg-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>Kafka hides trouble well. A cluster with one broker down still serves every request. A follower that is falling behind causes no error. A disk that fills in six hours looks fine now. Without measurements you learn about each of these when the second fault arrives and something stops.</p>
+  <p>Monitoring means three things: <strong>metrics</strong> that the brokers publish, a system that <strong>collects</strong> them over time, and <strong>alerts</strong> that tell a person when a number means trouble. The skill is not in collecting everything. It is in choosing a few signals, knowing what each one means, and deciding which ones are worth waking someone for.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> Read a short list of broker and controller metrics, collect them over time, and alert on lost availability at once and on lost redundancy during working hours.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part col" id="model" data-title="Mental model">
+  <span class="offset-tag">offset 1</span>
+  <h2>Mental model</h2>
+  <p>Sort every signal into one of three levels. The level decides the response.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Level</th><th>Meaning</th><th>Examples</th><th>Response</th></tr></thead>
+      <tbody>
+        <tr><td>Availability lost</td><td>Some clients are failing now.</td><td>Offline partitions. Partitions below the in-sync minimum. No active controller.</td><td>Page a person.</td></tr>
+        <tr><td>Redundancy lost</td><td>Everything works, with less protection.</td><td>Under-replicated partitions. A broker down. A fenced broker.</td><td>A ticket; fix in hours.</td></tr>
+        <tr><td>Capacity shrinking</td><td>Something will run out.</td><td>Disk filling. Request threads busy. Lag growing.</td><td>A ticket; fix in days.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Use the tiles at the top of the page. In each situation, find the first tile that turned red and decide its level.</p>
+
+  <h3>Two sources of numbers</h3>
+  <ul>
+    <li><strong>Inside the broker.</strong> Each broker publishes hundreds of metrics through the Java management interface, JMX. These describe what that broker sees and does: its request times, its thread use, the partitions <em>it leads</em>.</li>
+    <li><strong>From outside.</strong> An <strong>exporter</strong> connects like a client and asks the cluster about topics, partitions and offsets. It sees the cluster as applications see it.</li>
+  </ul>
+  <p>The two can give different numbers for what sounds like the same thing. In the lab, with one broker stopped, the exporter counted 57 under-replicated partitions for the cluster, and broker 1's own metric said 31. Both were right: a broker counts only the partitions it leads.</p>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part col" id="internals" data-title="How it works">
+  <span class="offset-tag">offset 2</span>
+  <h2>How it works internally</h2>
+
+  <h3>Metric names</h3>
+  <p>A broker metric has a domain, a type and a name, written like <code>kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions</code>. Some have more labels, such as the request type. Each has one or more attributes: a simple <code>Value</code>, or for rates and timings a <code>Count</code>, rates over 1, 5 and 15 minutes, and percentiles.</p>
+
+  <h3>The signals, by their real names</h3>
+  <p>Every name in this table was read from a lab broker with <code>kafka-jmx.sh</code>. The value column shows what a healthy lab cluster returned.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Metric</th><th>Healthy value seen</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>kafka.controller:type=KafkaController,name=OfflinePartitionsCount</code></td><td>0</td><td>Partitions with no leader.</td></tr>
+        <tr><td><code>kafka.controller:type=KafkaController,name=ActiveControllerCount</code></td><td>0 on broker 1; 1 on the active controller</td><td>1 on exactly one node. Add it up over all controllers: the sum must be 1.</td></tr>
+        <tr><td><code>kafka.controller:type=KafkaController,name=FencedBrokerCount</code></td><td>0</td><td>Registered brokers that may not lead.</td></tr>
+        <tr><td><code>kafka.server:type=ReplicaManager,name=UnderMinIsrPartitionCount</code></td><td>0</td><td>Partitions this broker leads that are below the in-sync minimum.</td></tr>
+        <tr><td><code>kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions</code></td><td>0</td><td>Partitions this broker leads with fewer in-sync replicas than replicas.</td></tr>
+        <tr><td><code>kafka.server:type=ReplicaManager,name=IsrShrinksPerSec</code></td><td>Count 0</td><td>How often in-sync sets shrink. A steady rate with no broker failure means a broker at its limit.</td></tr>
+        <tr><td><code>kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent</code></td><td>about 0.98</td><td>Share of time the request threads are idle, from 0 to 1. Low means saturated.</td></tr>
+        <tr><td><code>kafka.network:type=SocketServer,name=NetworkProcessorAvgIdlePercent</code></td><td>0.48 during a test</td><td>The same for network threads.</td></tr>
+        <tr><td><code>kafka.network:type=RequestMetrics,name=TotalTimeMs,request=Produce</code></td><td>percentiles</td><td>Time to serve a produce request. Use the 99th percentile. The same exists for <code>request=FetchConsumer</code>. <span class="tag-unverified">unverified: only Produce was read</span></td></tr>
+        <tr><td><code>kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec</code></td><td>a rate</td><td>Bytes written to this broker.</td></tr>
+        <tr><td><code>kafka.server:type=raft-metrics</code></td><td><code>current-leader=2</code>, <code>current-epoch=1</code>, <code>current-state=follower</code></td><td>The controller quorum as this node sees it. A rising epoch means elections.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>From metrics to alerts</h3>
+  <ol class="steps">
+    <li class="on">A collector, here Prometheus, reads the numbers every few seconds and stores them with a timestamp.</li>
+    <li class="on">A <strong>rule</strong> is an expression over those numbers, for example "the sum of under-replicated partitions is above 0".</li>
+    <li class="on">A rule has a <strong>for</strong> time. The condition must hold that long before the alert fires. This filters out a restart that lasts ten seconds.</li>
+    <li class="on">A firing alert carries a <strong>severity</strong> label, which decides if it pages a person or opens a ticket.</li>
+    <li class="on">When the condition stops, the alert clears by itself.</li>
+  </ol>
+
+  <h3>Lag is measured elsewhere</h3>
+  <p>Consumer lag is not a broker metric. It is the difference between a partition's end offset and a group's committed offset, so something must read both. The command-line tool does this (module 03). An exporter can do it too; the one in this lab could not read groups from Kafka 4.3, so the lab has no lag metric.</p>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>These are the settings of the lab's monitoring stack, in <code>docker-compose.yml</code> and the folder <code>monitoring/</code>. All of them ran as written.</p>
+  </div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Where</th><th>Setting</th><th>Lab value</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>Broker container</td><td><code>KAFKA_JMX_PORT</code></td><td>9101</td><td>Opens the broker's metrics port.</td></tr>
+        <tr><td>Broker container</td><td><code>KAFKA_JMX_HOSTNAME</code></td><td><code>localhost</code></td><td>The name the metrics interface announces. With <code>localhost</code>, read it from inside the same container.</td></tr>
+        <tr><td>Exporter</td><td><code>--kafka.server</code></td><td>the three brokers</td><td>Where the exporter connects, as a client.</td></tr>
+        <tr><td>Exporter</td><td><code>--kafka.version</code></td><td>3.6.0</td><td>The protocol version its client library uses.</td></tr>
+        <tr><td>Prometheus</td><td><code>scrape_interval</code></td><td>5 seconds</td><td>How often numbers are read. 15 to 60 seconds is usual in production.</td></tr>
+        <tr><td>Prometheus</td><td><code>evaluation_interval</code></td><td>5 seconds</td><td>How often rules are checked.</td></tr>
+        <tr><td>Alert rule</td><td><code>for</code></td><td>15 to 30 seconds</td><td>How long a condition must hold before the alert fires. Short here so that the lab is quick; minutes in production.</td></tr>
+        <tr><td>Alert rule</td><td><code>severity</code> label</td><td><code>page</code> or <code>ticket</code></td><td>Routes the alert to the right response.</td></tr>
+        <tr><td>Grafana</td><td>data source file</td><td>points at Prometheus</td><td>Lets you build dashboards at <code>http://localhost:3005</code>. The lab ships no ready-made dashboard.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h3>The alert rules in the lab</h3>
+    <pre><code>- alert: KafkaBrokerDown
+  expr: kafka_brokers &lt; 3
+  for: 15s
+  labels: { severity: page }
+
+- alert: KafkaUnderReplicatedPartitions
+  expr: sum(kafka_topic_partition_under_replicated_partition) &gt; 0
+  for: 30s
+  labels: { severity: ticket }
+
+- alert: KafkaPartitionBelowMinimum
+  expr: sum(kafka_topic_partition_in_sync_replica &lt; 2) &gt; 0
+  for: 15s
+  labels: { severity: page }</code></pre>
+    <p class="note">In the lab, "broker down" pages, so that you see a page-level alert fire. On a real cluster with three copies and a minimum of 2, one broker down is redundancy lost: a ticket, not a page. Decide severity from what the alert means for clients.</p>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>The monitoring tool cannot read the new Kafka version</h3>
+    <dl>
+      <dt>You observe</dt><dd>In the lab, the exporter logged "Cannot get consumer group: kafka: broker not connected" every few seconds and published no lag metric. Topic and broker metrics worked.</dd>
+      <dt>Cause</dt><dd>The exporter's client library and Kafka 4.3 do not agree on a request. Kafka 4 removed old protocol versions. <span class="tag-unverified">unverified: I did not find the exact cause</span></dd>
+      <dt>Lesson</dt><dd>Test your monitoring against a new Kafka version before the upgrade, with the same care as an application. A dashboard that goes blank during an upgrade is the worst moment to lose it.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>An alert rule that can never fire</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A rule refers to a metric that does not exist. It evaluates to nothing, shows as "inactive", and looks healthy for ever.</dd>
+      <dt>Evidence</dt><dd>My first version of the lab's rules included a lag alert on a metric the exporter never published. Prometheus loaded it without complaint.</dd>
+      <dt>Fix</dt><dd>Test every alert by causing the fault, as this lab does. Add an alert for "metric absent".</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Counting a per-broker metric as a cluster total</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A dashboard shows one broker's "under-replicated partitions" and someone reads it as the cluster's number. Or it shows <code>ActiveControllerCount</code> of 0 from one node and someone declares an emergency.</dd>
+      <dt>Evidence</dt><dd>Broker 1 reported 31 while the cluster had 57. Broker 1 reported an active controller count of 0 while node 2 was the active controller.</dd>
+      <dt>Fix</dt><dd>Add per-broker metrics up over all brokers. For the controller count, alert when the <em>sum</em> is not exactly 1.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Alerts that nobody believes</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Every rolling restart fires ten alerts. People mute them. The real alert, a week later, is muted too.</dd>
+      <dt>Fix</dt><dd>Give each rule a <code>for</code> time longer than a normal restart. Silence alerts during planned maintenance. Remove any alert that has never led to an action.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Watching the average</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Average produce time is 4 ms and looks fine while one request in a hundred takes two seconds.</dd>
+      <dt>Fix</dt><dd>Alert on the 99th percentile. The timing metrics publish percentiles for this reason.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The metrics port is open to everyone</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The Java management interface can do more than read numbers. An open, unauthenticated port is a way into the broker.</dd>
+      <dt>Fix</dt><dd>Keep it on a private network, or require authentication for it. The lab opens it only inside the Docker network.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 5 October 2026</strong> on the main lab cluster. The monitoring containers are in the main <code>docker-compose.yml</code> but start only when you ask for the <code>monitoring</code> profile.</p>
+  </div>
+
+  <h3>Step 1. Start the cluster with monitoring</h3>
+  <div class="code"><pre><code>cd ~/Desktop/kafka-knowledge-base
+docker compose --profile monitoring up -d
+k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092</code></pre></div>
+  <p>Prometheus is at <code>http://localhost:9095</code> and Grafana at <code>http://localhost:3005</code>.</p>
+
+  <h3>Step 2. Read broker metrics by name</h3>
+  <div class="code"><pre><code>J() { docker exec -i kafka-1 timeout 20 /opt/kafka/bin/kafka-jmx.sh \
+  --jmx-url service:jmx:rmi:///jndi/rmi://localhost:9101/jmxrmi \
+  --one-time true --report-format properties --object-name "$1"; }
+
+J 'kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions'
+J 'kafka.controller:type=KafkaController,name=ActiveControllerCount'
+J 'kafka.controller:type=KafkaController,name=OfflinePartitionsCount'
+J 'kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent'
+J 'kafka.server:type=raft-metrics'</code></pre></div>
+  <pre class="out">kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions:Value=0
+kafka.controller:type=KafkaController,name=ActiveControllerCount:Value=0
+kafka.controller:type=KafkaController,name=OfflinePartitionsCount:Value=0
+kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent:FifteenMinuteRate=0.9778922787520811
+kafka.server:type=raft-metrics:current-leader=2
+kafka.server:type=raft-metrics:current-epoch=1
+kafka.server:type=raft-metrics:current-state=follower</pre>
+  <p>Look at the second line. The active controller count on node 1 is 0, and that is healthy: the quorum's leader is node 2, as the last lines say. Run the same command in <code>kafka-2</code> and you get 1.</p>
+
+  <h3>Step 3. Check the collector</h3>
+  <div class="code"><pre><code>curl -s http://localhost:9095/api/v1/targets | python3 -c "import sys,json;[print(t['labels']['job'],t['health']) for t in json.load(sys.stdin)['data']['activeTargets']]"
+curl -s http://localhost:9095/api/v1/rules   | python3 -c "import sys,json;[print(r['name'],r['state']) for g in json.load(sys.stdin)['data']['groups'] for r in g['rules']]"</code></pre></div>
+  <pre class="out">kafka up
+
+KafkaBrokerDown inactive
+KafkaUnderReplicatedPartitions inactive
+KafkaPartitionBelowMinimum inactive</pre>
+  <p>The exporter publishes these metric names: <code>kafka_brokers</code>, <code>kafka_topic_partitions</code>, <code>kafka_topic_partition_current_offset</code>, <code>kafka_topic_partition_oldest_offset</code>, <code>kafka_topic_partition_leader</code>, <code>kafka_topic_partition_leader_is_preferred</code>, <code>kafka_topic_partition_replicas</code>, <code>kafka_topic_partition_in_sync_replica</code> and <code>kafka_topic_partition_under_replicated_partition</code>.</p>
+
+  <h3>Step 4. Cause a fault and watch the alerts</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic watched --partitions 6 --replication-factor 3
+q() { curl -s --data-urlencode "query=$1" http://localhost:9095/api/v1/query; echo; }
+
+q 'kafka_brokers'
+docker stop kafka-3
+# wait 50 seconds
+q 'kafka_brokers'
+q 'sum(kafka_topic_partition_under_replicated_partition)'
+q 'ALERTS{alertstate="firing"}'
+J 'kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions'</code></pre></div>
+  <div class="out-label">Output, reduced to the values</div>
+  <pre class="out">before:   kafka_brokers = 3
+
+after:    kafka_brokers = 2
+          under-replicated partitions, cluster total = 57
+          firing: KafkaBrokerDown, KafkaUnderReplicatedPartitions
+          broker 1's own UnderReplicatedPartitions = 31</pre>
+  <p>Two alerts fired within 50 seconds. <code>KafkaPartitionBelowMinimum</code> did not, and that is correct: with one broker down, every partition still has two in-sync replicas. The cluster total, 57, counts internal topics too. Broker 1 reports only the 31 partitions it leads.</p>
+
+  <h3>Step 5. Repair and watch them clear</h3>
+  <div class="code"><pre><code>docker start kafka-3
+# wait 40 seconds
+q 'kafka_brokers'
+q 'sum(kafka_topic_partition_under_replicated_partition)'
+q 'ALERTS{alertstate="firing"}'</code></pre></div>
+  <pre class="out">kafka_brokers = 3
+under-replicated partitions = 0
+firing: (nothing)</pre>
+
+  <h3>Step 6. Look in the browser, then stop</h3>
+  <p>Open <code>http://localhost:9095/alerts</code> to see the three rules and their state. In Grafana, the Prometheus data source is already connected: make a panel with the query <code>kafka_brokers</code> and repeat step 4 to watch the line drop.</p>
+  <div class="code"><pre><code>docker compose --profile monitoring down</code></pre></div>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>More dashboards mean better monitoring.</td><td>A few signals that people understand beat fifty that nobody reads.</td></tr>
+        <tr><td><code>ActiveControllerCount</code> of 0 on a node is an emergency.</td><td>It is 1 on one node and 0 on the others. The sum must be 1.</td></tr>
+        <tr><td>A broker's under-replicated count is the cluster's.</td><td>Each broker counts the partitions it leads. Add them up.</td></tr>
+        <tr><td>An alert rule that loads without error works.</td><td>A rule on a missing metric loads and never fires. Test by causing the fault.</td></tr>
+        <tr><td>Every alert should page.</td><td>Page for lost availability. Lost redundancy is a ticket.</td></tr>
+        <tr><td>Lag is a broker metric.</td><td>It needs the end offset and the group's committed offset, read by a tool or an exporter.</td></tr>
+        <tr><td>Monitoring tools keep working across Kafka upgrades.</td><td>The lab's exporter lost its group metrics on Kafka 4.3.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>You may have five alerts for a Kafka cluster. Which five?</summary><div class="answer">
+    <p>Offline partitions above 0. The sum of active controllers not equal to 1. Partitions below the in-sync minimum above 0. Disk predicted to fill within a day. Consumer lag in time above each critical application's limit.</p>
+    <p>Those five mean clients are failing or are about to. Everything else, such as under-replicated partitions or thread saturation, is a ticket or a dashboard.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you alert on a disk before it is full?</summary><div class="answer">
+    <p>Not on a level alone. Alert on the predicted time to full, from the growth rate over the last hours: a disk at 70% that grows 5% each hour is urgent, and a disk at 85% that has been flat for a month is not. Keep a simple level alert as a backstop.</p>
+  </div></details>
+
+  <details class="qa"><summary>What is the right way to measure consumer lag?</summary><div class="answer">
+    <p>In time, not in records: how old is the oldest record the group has not processed? Record counts mean different things on a busy and a quiet topic. Compare the time with what the business accepts for that application, and with the topic's retention, because lag beyond retention is data loss.</p>
+    <p>Also alert when a partition's committed offset has not moved while its end offset has. That catches a stuck consumer before the backlog is large.</p>
+  </div></details>
+
+  <details class="qa"><summary>Produce latency at the 99th percentile doubled. How do you find the cause from metrics?</summary><div class="answer">
+    <p>The request time metric splits into parts: time waiting in the queue, time on the local disk, time waiting for followers, time to send the answer. Queue time points to saturated request threads. Local time points to this broker's disk. Follower wait points to a slow follower or the network between brokers.</p>
+    <p>Then compare brokers. One broker different from the rest is a hardware or placement problem. All brokers together is load. <span class="tag-unverified">unverified: the lab read only the total time</span></p>
+  </div></details>
+
+  <details class="qa"><summary>How do you keep monitoring correct through a Kafka upgrade?</summary><div class="answer">
+    <p>Treat the monitoring stack as a client of the cluster with its own compatibility check. Before the upgrade, run the exporters and dashboards against a test cluster on the new version and cause each fault. Add alerts for missing metrics, so that a silent gap is itself an alert. Keep the command-line checks from module 09 in the runbook as a fallback that needs no extra tooling.</p>
+  </div></details>
+
+  <details class="qa"><summary>What do you show application teams, and what do you keep for the platform team?</summary><div class="answer">
+    <p>Application teams: their own consumer lag in time, their produce error rate and latency, the size and retention of their topics, their quota use. Platform team: broker and controller health, disk, threads, replication.</p>
+    <p>Teams act on what they can change. A team that sees broker thread metrics can only worry about them.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+  <details class="qa"><summary>1. Name the three levels of signal and the response to each.</summary><div class="answer"><p>Availability lost: page. Redundancy lost: ticket, hours. Capacity shrinking: ticket, days.</p></div></details>
+  <details class="qa"><summary>2. Which metric counts partitions with no leader?</summary><div class="answer"><p><code>kafka.controller:type=KafkaController,name=OfflinePartitionsCount</code>.</p></div></details>
+  <details class="qa"><summary>3. What should the active controller count add up to?</summary><div class="answer"><p>Exactly 1 over all controllers.</p></div></details>
+  <details class="qa"><summary>4. Why did broker 1 report 31 under-replicated partitions when the cluster had 57?</summary><div class="answer"><p>A broker counts only the partitions it leads.</p></div></details>
+  <details class="qa"><summary>5. What does a rule's <code>for</code> time do?</summary><div class="answer"><p>The condition must hold that long before the alert fires, which filters out short events such as a restart.</p></div></details>
+  <details class="qa"><summary>6. With one of three brokers down, which lab alert stayed quiet, and why?</summary><div class="answer"><p><code>KafkaPartitionBelowMinimum</code>. Every partition still had two in-sync replicas.</p></div></details>
+  <details class="qa"><summary>7. How do you know an alert rule works?</summary><div class="answer"><p>Cause the fault and watch it fire.</p></div></details>
+  <details class="qa"><summary>8. Where does a lag number come from?</summary><div class="answer"><p>From the partition's end offset minus the group's committed offset, read by a tool or an exporter.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="11-security-lab.html">← 11 Security lab</a>
+    <a class="btn primary" href="13-cdc-outbox-lab.html">13 Change data capture lab →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+(function () {
+  const sel = document.getElementById('sg-case'), tiles = document.getElementById('sg-tiles'), out = document.getElementById('sg-out');
+  const NAMES = ['Offline partitions', 'Active controllers (sum)', 'Below in-sync minimum', 'Under-replicated', 'Request threads idle', 'In-sync shrinks each minute'];
+  // values, which tiles are alarms, explanation
+  const CASES = {
+    ok: [['0', '1', '0', '0', '98%', '0'], [], '<b>Healthy.</b> Learn this picture. Every other situation is a difference from it.'],
+    down: [['0', '1', '0', '57', '97%', '0'], [3], '<b>Redundancy lost.</b> Nothing is offline and nothing is below the minimum: every client still works. Under-replicated is 57, the number the lab measured. A ticket, not a page. Find out why the broker stopped, and do not restart anything else.'],
+    two: [['0', '1', '57', '57', '96%', '0'], [2, 3], '<b>Availability lost for writers.</b> Each partition has one in-sync replica, below the minimum of 2. Producers with acks=all are refused. Consumers still read. Page someone.'],
+    slow: [['0', '1', '0', '12', '95%', '9'], [3, 5], '<b>Redundancy lost, and unstable.</b> No broker is down, yet some partitions are under-replicated and in-sync sets keep shrinking and expanding. One follower cannot keep up. Look at that broker\'s disk and network.'],
+    noctl: [['0', '0', '0', '0', '98%', '0'], [1], '<b>Availability at risk.</b> Clients are fine now, so every other tile is green. But nothing can change: no leader election, no new topic. The next broker failure becomes an outage. Page someone.'],
+    busy: [['0', '1', '0', '0', '6%', '2'], [4, 5], '<b>Capacity.</b> Request threads are idle only 6% of the time. Requests queue, latency rises, and followers begin to fall behind. Find the heavy client, apply a quota, or add capacity.'],
+  };
+  function draw() {
+    const [vals, alarms, text] = CASES[sel.value];
+    tiles.innerHTML = '';
+    vals.forEach((v, i) => {
+      const d = document.createElement('div');
+      d.className = 'stat ' + (alarms.includes(i) ? 'alarm' : 'fine');
+      d.innerHTML = '<b>' + v + '</b><span>' + NAMES[i] + (alarms.includes(i) ? ' · not normal' : '') + '</span>';
+      tiles.appendChild(d);
+    });
+    out.innerHTML = text;
+  }
+  sel.addEventListener('change', draw);
+  draw();
+})();
+</script>
+<script src="extras/12.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

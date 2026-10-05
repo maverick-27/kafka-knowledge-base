@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reading guide · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+<style>
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 32rem), 1fr)); gap: 1rem; align-items: start; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem; min-width: 0; overflow-wrap: anywhere; }
+  .card[hidden] { display: none; }
+  .card.is-read { border-color: var(--primary); }
+  .card-head { display: flex; gap: .8rem; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; }
+  .card h3 { font-size: 1.1rem; margin: .1rem 0 .4rem; }
+  .card h4 { font: 600 .85rem var(--body); color: var(--muted); margin: .9rem 0 .3rem; }
+  .card .from { font: 500 .78rem var(--mono); color: var(--muted); }
+  .card dl { margin: .4rem 0 0; }
+  .card dt { font: 600 .8rem var(--body); color: var(--muted); margin-top: .5rem; }
+  .card dd { margin: .1rem 0 0; }
+  .card ul { padding-left: 1.2rem; margin: .2rem 0; }
+  .card li { margin: .25rem 0; }
+  .qq { font-style: italic; }
+  .src, .small { font-size: .85rem; color: var(--muted); }
+  .pill { border: 1px solid var(--line); border-radius: 99px; padding: 0 .45rem; font: 500 .72rem var(--mono); }
+  .rd { display: inline-flex; gap: .45rem; align-items: center; min-height: 44px; font-weight: 500; cursor: pointer; }
+  .rd input { width: 1.2rem; height: 1.2rem; accent-color: var(--primary); }
+  .order li { margin: .3rem 0; }
+  .est { font: 500 .8rem var(--mono); color: var(--muted); margin-left: .4rem; }
+  .status-line { font-weight: 500; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ reading guide</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="hero">
+  <div class="eyebrow">Kafka 4.3 · verified 5 October 2026</div>
+  <h1>Reading guide: the design proposals and sources behind Kafka's key features</h1>
+  <p class="lede">A Kafka Improvement Proposal (KIP) is the written design for one change to Kafka. Interviewers at staff level expect you to know why a feature exists, not only how to switch it on. Each card tells you what to read and what to take from it.</p>
+</div>
+
+<div class="wide">
+
+<div class="note">
+  <p><strong>Read this first.</strong> A proposal describes the design at the time it was written. The final behaviour may differ. Always check the release notes for the version you run.</p>
+  <p><strong>How this page was checked.</strong> On 5 October 2026 I opened each proposal page, and the Jira ticket or release announcement where a version was needed. Every fact comes from those pages. Where I could not confirm a field, the card says "not confirmed" and carries the tag <span class="tag-unverified">unverified</span>. "Status" is the state shown on the wiki page. It is often older than the code, so it does not say whether the feature shipped.</p>
+</div>
+
+<h2>Suggested reading order</h2>
+<p>The order builds ideas in sequence: the log, then producers, replication, consumers, the controller, and last the newest features. The times are my rough guess for reading the Motivation and Proposed Changes sections with notes. I did not measure them. Expect about 25 to 30 hours in all. Long proposals such as KIP-848 can take longer.</p>
+<ol class="order"><li><a href="#src-log">The Log article</a> <span class="est">45 min</span></li><li><a href="#src-design">Kafka documentation, Design</a> <span class="est">1 to 2 hours</span></li><li><a href="#kip-98">KIP-98</a> <span class="est">2 to 3 hours</span></li><li><a href="#kip-101">KIP-101</a> <span class="est">1 hour</span></li><li><a href="#kip-279">KIP-279</a> <span class="est">45 min</span></li><li><a href="#kip-890">KIP-890</a> <span class="est">1.5 hours</span></li><li><a href="#kip-345">KIP-345</a> <span class="est">45 min</span></li><li><a href="#kip-429">KIP-429</a> <span class="est">1 hour</span></li><li><a href="#kip-848">KIP-848</a> <span class="est">2 to 3 hours</span></li><li><a href="#kip-392">KIP-392</a> <span class="est">45 min</span></li><li><a href="#src-raft">The Raft paper</a> <span class="est">2 to 3 hours</span></li><li><a href="#kip-500">KIP-500</a> <span class="est">1 hour</span></li><li><a href="#kip-595">KIP-595</a> <span class="est">2 hours</span></li><li><a href="#kip-833">KIP-833</a> <span class="est">30 min</span></li><li><a href="#kip-853">KIP-853</a> <span class="est">1.5 hours</span></li><li><a href="#kip-966">KIP-966</a> <span class="est">1 hour</span></li><li><a href="#kip-405">KIP-405</a> <span class="est">2 hours</span></li><li><a href="#kip-932">KIP-932</a> <span class="est">2 hours</span></li><li><a href="#kip-382">KIP-382</a> <span class="est">1 hour</span></li></ol>
+
+<h2>Proposals and sources</h2>
+<div class="controls">
+  <label for="topic">Filter by topic</label>
+  <select id="topic"><option value="all">All topics</option><option value="producer">Producer</option><option value="consumer">Consumer</option><option value="replication">Replication</option><option value="controller">Controller</option><option value="storage">Storage</option><option value="queues">Queues</option></select>
+  <label><input type="checkbox" id="hide-read"> Hide cards I have read</label>
+</div>
+<p class="status-line" id="status" role="status" aria-live="polite"></p>
+<p class="small">Your read marks are saved in this browser only. The filter does not hide the five non-KIP sources.</p>
+
+<div class="cards" id="kips">
+<article class="card" id="kip-98" data-topics="producer">
+  <div class="card-head">
+    <div><div class="from">KIP-98 · <span class="pill">producer</span></div><h3>KIP-98 - Exactly Once Delivery and Transactional Messaging</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-98"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Adopted</dd>
+    <dt>First Kafka version</dt><dd>0.11.0.0 (released 2017-06-28). Source: the Jira ticket KAFKA-4815, titled "Idempotent/transactional Producer (KIP-98)".</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>Kafka gave "at least once" delivery, so a retry could write the same record twice. Stream processing also needed to write to several partitions as one atomic unit.</p>
+  <h4>Read these parts first</h4><p>Motivation, Proposed Changes, Rejected Alternatives. The page also has Public Interfaces, Message Format and RPC Protocol Summary. <strong>Most useful:</strong> Proposed Changes, then Message Format.</p>
+  <h4>What to take from it</h4><ul><li>The producer API gains five methods: initTransactions, beginTransaction, sendOffsets, commitTransaction and abortTransaction.</li><li>The message format moves to version 2. It adds a producer ID (64 bits), an epoch (16 bits) and a sequence number (32 bits) once per batch, not once per record.</li><li>A new consumer setting, isolation.level, has two values: read_uncommitted (the default) and read_committed.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">A producer times out and retries. How does the broker know the retry is a duplicate, and what must stay the same for that to work?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/02-producers.html">Module 02 Producers</a>, <a href="modules/06-transactions.html">Module 06 Transactions</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=66854913" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-4815" target="_blank" rel="noopener">Jira KAFKA-4815</a></p>
+</article>
+<article class="card" id="kip-890" data-topics="producer">
+  <div class="card-head">
+    <div><div class="from">KIP-890 · <span class="pill">producer</span></div><h3>KIP-890: Transactions Server-Side Defense</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-890"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Approved</dd>
+    <dt>First Kafka version</dt><dd>Not fully confirmed <span class="tag-unverified">unverified</span>. The Jira sub-task KAFKA-15449 ("Verify transactional offset commits (KIP-890 part 1)") is fixed in 3.7.0. The Kafka 4.0 announcement says the second phase is complete. The umbrella ticket KAFKA-14402 lists 4.1.0. I did not find one page that states the first release.</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>A delayed message can arrive after its transaction has aborted. That leaves a hanging transaction: the last stable offset (the point up to which read_committed consumers may read) stops moving, and the log cannot be cleaned.</p>
+  <h4>Read these parts first</h4><p>Motivation, Proposed Changes, Rejected Alternatives. The page has no delivery plan, so use the release notes to see what shipped when. <strong>Most useful:</strong> Motivation, because it lists the exact failure cases.</p>
+  <h4>What to take from it</h4><ul><li>The producer epoch goes up after every commit or abort marker. The pair (producer id, epoch) then names one transaction.</li><li>New clients add a partition to the transaction on the first produce request. They no longer need a separate AddPartitionsToTxn call.</li><li>For older clients, the broker checks with a verify-only AddPartitionsToTxn request and returns INVALID_TXN_STATE if no transaction is open.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">Why was the transaction coordinator alone not enough to stop a delayed write from joining the next transaction?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/06-transactions.html">Module 06 Transactions</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-890%3A+Transactions+Server-Side+Defense" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-14402" target="_blank" rel="noopener">Jira KAFKA-14402</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-15449" target="_blank" rel="noopener">Jira KAFKA-15449</a> · <a href="https://kafka.apache.org/blog/2025/03/18/apache-kafka-4.0.0-release-announcement/" target="_blank" rel="noopener">Kafka 4.0 announcement</a></p>
+</article>
+<article class="card" id="kip-848" data-topics="consumer">
+  <div class="card-head">
+    <div><div class="from">KIP-848 · <span class="pill">consumer</span></div><h3>KIP-848: The Next Generation of the Consumer Rebalance Protocol</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-848"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>4.0.0, generally available. Sources: the Kafka 4.0 upgrade guide and Jira KAFKA-14048 (fix version 4.0.0, released 2025-03-18).</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>The old rebalance protocol put the assignment logic in the clients. A fix needed a client release, problems were hard to debug without client logs, and every rebalance made the whole group stop and wait.</p>
+  <h4>Read these parts first</h4><p>Motivation first. Then the sections on the heartbeat call and the assignors. I did not record the exact section names for this page <span class="tag-unverified">unverified</span>. <strong>Most useful:</strong> Motivation.</p>
+  <h4>What to take from it</h4><ul><li>A new call, ConsumerGroupHeartbeat, carries membership, state and partition assignment. The group coordinator drives it.</li><li>Brokers run the assignors on the server. Range and uniform ship by default. Kafka Streams keeps client-side assignment.</li><li>Offset commit and fetch use topic IDs, so a deleted and re-created topic is not mistaken for the old one.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">In the old protocol, why did one slow member delay the whole group? What removes that dependency in the new one?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/03-consumers.html">Module 03 Consumers</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-848:+The+Next+Generation+of+the+Consumer+Rebalance+Protocol" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-14048" target="_blank" rel="noopener">Jira KAFKA-14048</a> · <a href="https://kafka.apache.org/40/getting-started/upgrade/" target="_blank" rel="noopener">Kafka 4.0 upgrade guide</a></p>
+</article>
+<article class="card" id="kip-429" data-topics="consumer">
+  <div class="card-head">
+    <div><div class="from">KIP-429 · <span class="pill">consumer</span></div><h3>KIP-429: Kafka Consumer Incremental Rebalance Protocol</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-429"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted (2.4.0), as written on the page</dd>
+    <dt>First Kafka version</dt><dd>2.4.0. Sources: the status line on the KIP page and Jira KAFKA-8179 (fix version 2.4.0).</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>In a rebalance, every member gave up all its partitions, even those it would keep. Stateful applications such as Kafka Streams paid a high price for that pause.</p>
+  <h4>Read these parts first</h4><p>Motivation first, then the sections on the changed protocol and the upgrade plan. I did not record the exact section names for this page <span class="tag-unverified">unverified</span>. <strong>Most useful:</strong> The upgrade plan, because it shows why two rolling restarts are needed.</p>
+  <h4>What to take from it</h4><ul><li>Members report the partitions they own in their subscription and assignment messages, so only moved partitions are revoked.</li><li>Upgrading takes two rolling restarts. First add CooperativeStickyAssignor beside the old assignor. Then remove the old one.</li><li>A new callback, onPartitionsLost(), tells an application it was removed from the group, as opposed to a normal rebalance.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">Why does a rebalance in two rounds stop fewer partitions than one rebalance that revokes everything?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/03-consumers.html">Module 03 Consumers</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=103090108" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-8179" target="_blank" rel="noopener">Jira KAFKA-8179</a></p>
+</article>
+<article class="card" id="kip-345" data-topics="consumer">
+  <div class="card-head">
+    <div><div class="from">KIP-345 · <span class="pill">consumer</span></div><h3>KIP-345: Introduce static membership protocol to reduce consumer rebalances</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-345"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>2.4.0 <span class="tag-unverified">unverified</span>. The wiki page gives no version. Jira KAFKA-7018 ("persist memberId for consumer restart") is fixed in 2.4.0, but its title does not name the KIP.</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>A restarting consumer got a new identity, so each restart caused a rebalance. A rolling restart of N consumers caused about 2N rebalances.</p>
+  <h4>Read these parts first</h4><p>Motivation, Background of Consumer Rebalance, Proposed Changes, Rejected Alternatives. The page also has a Non Goal and a Future Works section. <strong>Most useful:</strong> Background of Consumer Rebalance.</p>
+  <h4>What to take from it</h4><ul><li>A consumer setting, group.instance.id, names each client. A non-null value turns on static membership.</li><li>The broker keeps an in-memory map from group.instance.id to member.id. A returning member gets its old assignment without a rebalance.</li><li>The page raises the maximum session timeout to 30 minutes, so a restart can finish before the broker removes the member.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">You turn on static membership and set a long session timeout. What do you gain, and what do you risk when a member really dies?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/03-consumers.html">Module 03 Consumers</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=87300241" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-7018" target="_blank" rel="noopener">Jira KAFKA-7018</a></p>
+</article>
+<article class="card" id="kip-101" data-topics="replication">
+  <div class="card-head">
+    <div><div class="from">KIP-101 · <span class="pill">replication</span></div><h3>KIP-101 - Alter Replication Protocol to use Leader Epoch rather than High Watermark for Truncation</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-101"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>0.11.0.0. Source: Jira KAFKA-1211, whose title names KIP-101 (fix version 0.11.0.0).</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>A follower that restarted cut its log back to its high watermark (the last offset known to be safe). It could then become leader and lose records that were in fact committed. Replica logs could also end up different.</p>
+  <h4>Read these parts first</h4><p>Definition of Terms, Motivation, Proposed Changes, Rejected Alternatives. The page also has Additional Concerns and an Appendix. <strong>Most useful:</strong> Motivation, because it walks through the failure step by step.</p>
+  <h4>What to take from it</h4><ul><li>A leader epoch is a 32-bit number that rises with each period of leadership for one partition. The leader stamps it on the messages it accepts.</li><li>The core failure: a follower truncates to its high watermark, becomes leader, and permanently loses data before the old leader passes on the commit.</li><li>Each replica keeps a leader epoch sequence file, which maps epochs to offsets and is cached in memory. Truncation uses it in place of the high watermark.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">A follower restarts and its high watermark is behind the leader. Walk through what it truncates under the old rule and under the epoch rule.</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/04-replication.html">Module 04 Replication</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=67634337" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-1211" target="_blank" rel="noopener">Jira KAFKA-1211</a></p>
+</article>
+<article class="card" id="kip-279" data-topics="replication">
+  <div class="card-head">
+    <div><div class="from">KIP-279 · <span class="pill">replication</span></div><h3>KIP-279: Fix log divergence between leader and follower after fast leader fail over</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-279"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>2.0.0. Source: Jira KAFKA-6361, "Fast leader fail over can lead to log divergence between leader and follower" (fix version 2.0.0).</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>KIP-101 left some cases where two replicas keep different logs after a quick leader change. This KIP closes those cases for both clean and unclean elections.</p>
+  <h4>Read these parts first</h4><p>Motivation, Proposed Changes, Rejected Alternatives. The page also covers the effect on compacted topics. <strong>Most useful:</strong> Proposed Changes. Read KIP-101 first.</p>
+  <h4>What to take from it</h4><ul><li>The OffsetForLeaderEpoch response gains a leader epoch field. Brokers use it to find the longest common log prefix where offsets and epochs both match.</li><li>In rare unclean elections a follower may need several request and response rounds to converge. The common case needs only a few.</li><li>If the leader has no epoch information, it answers UNKNOWN_OFFSET_FOR_LEADER_EPOCH. The follower then falls back to truncating at the high watermark.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">Why is an offset alone not enough to say two logs match? What does the epoch add?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/04-replication.html">Module 04 Replication</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=75978352" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-6361" target="_blank" rel="noopener">Jira KAFKA-6361</a></p>
+</article>
+<article class="card" id="kip-392" data-topics="replication consumer">
+  <div class="card-head">
+    <div><div class="from">KIP-392 · <span class="pill">replication</span> <span class="pill">consumer</span></div><h3>KIP-392: Allow consumers to fetch from closest replica</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-392"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>2.4.0. Source: Jira KAFKA-8443 (fix version 2.4.0, released 2019-12-16).</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>Consumers could read only from the partition leader. When a cluster spans data centres, that sends read traffic across them and costs money.</p>
+  <h4>Read these parts first</h4><p>Motivation, Proposed Changes, Rejected Alternatives. The page also has Protocol Changes. <strong>Most useful:</strong> Proposed Changes.</p>
+  <h4>What to take from it</h4><ul><li>Consumers may fetch from any replica. The high watermark still limits what they can see, so replication guarantees hold.</li><li>The broker chooses the replica through a plug-in set by replica.selector.class, using client location such as the rack ID.</li><li>A new error code, OFFSET_NOT_AVAILABLE, marks an offset that exists but is not yet available on that replica. The consumer retries.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">A consumer reads from a follower. Could it see a record that is later lost? Why or why not?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/04-replication.html">Module 04 Replication</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=95653762" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-8443" target="_blank" rel="noopener">Jira KAFKA-8443</a></p>
+</article>
+<article class="card" id="kip-500" data-topics="controller">
+  <div class="card-head">
+    <div><div class="from">KIP-500 · <span class="pill">controller</span></div><h3>KIP-500: Replace ZooKeeper with a Self-Managed Metadata Quorum</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-500"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>2.8.0, from the fix version of the Jira ticket KAFKA-9119. How that release labelled the feature (for example early access): not confirmed <span class="tag-unverified">unverified</span>.</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>Kafka needed a separate ZooKeeper cluster to keep its metadata. That limited the number of partitions, added a second system to run, and made the cluster harder to set up.</p>
+  <h4>Read these parts first</h4><p>Motivation, Architecture, Compatibility Deprecation and Migration Plan, Rejected Alternatives, Follow-on Work. <strong>Most useful:</strong> Architecture.</p>
+  <h4>What to take from it</h4><ul><li>Three controller nodes form a Raft quorum that manages the metadata log. They replace three ZooKeeper nodes.</li><li>Brokers fetch metadata updates from the active controller through a new MetadataFetch API. The controller does not push them.</li><li>The plan needs a bridge release, where ZooKeeper stays but sits only behind the controller, before it is removed.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">What failure does the single metadata log remove, compared with controllers that push state changes to brokers?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/05-kraft.html">Module 05 KRaft</a></p><p class="small">The KIP is the vision. KIP-595 holds the protocol and KIP-833 the timeline.</p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-500%3A+Replace+ZooKeeper+with+a+Self-Managed+Metadata+Quorum" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-9119" target="_blank" rel="noopener">Jira KAFKA-9119</a></p>
+</article>
+<article class="card" id="kip-595" data-topics="controller">
+  <div class="card-head">
+    <div><div class="from">KIP-595 · <span class="pill">controller</span></div><h3>KIP-595: A Raft Protocol for the Metadata Quorum</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-595"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>Not confirmed <span class="tag-unverified">unverified</span>. The Jira ticket KAFKA-9876 is still open and has no fix version.</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>KIP-500 needed a way for the controllers to agree on one metadata log. This KIP adapts Raft, a consensus protocol, to Kafka while keeping its pull-based replication and log structure.</p>
+  <h4>Read these parts first</h4><p>Motivation, Key Concepts, Leader Election and Data Replication, Log Compaction and Snapshots, Rejected Alternatives. <strong>Most useful:</strong> Key Concepts, then Leader Election and Data Replication. Read the Raft paper first.</p>
+  <h4>What to take from it</h4><ul><li>Replication is pull-based. Voters and observers send fetch requests to the leader, which simplifies bootstrap and observers.</li><li>A record is identified by its offset and the epoch of the leader that appended it. That lets logs reconcile after a leader change.</li><li>The page requires an fsync (a forced write to disk) on every append to the local log of the metadata topic.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">Raft pushes entries from the leader. Kafka pulls. What does that change for a new or lagging controller?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/05-kraft.html">Module 05 KRaft</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-595%3A+A+Raft+Protocol+for+the+Metadata+Quorum" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-9876" target="_blank" rel="noopener">Jira KAFKA-9876</a></p>
+</article>
+<article class="card" id="kip-833" data-topics="controller">
+  <div class="card-head">
+    <div><div class="from">KIP-833 · <span class="pill">controller</span></div><h3>KIP-833: Mark KRaft as Production Ready</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-833"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>Removal of ZooKeeper mode: 4.0.0. Source: the Kafka 4.0 upgrade guide ("ZooKeeper mode has been removed"). I found no separate proposal that is titled as the removal itself <span class="tag-unverified">unverified</span>. KIP-833 is the plan that names Kafka 4.0.</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>Kafka had to maintain two controller code paths, one for ZooKeeper and one for KRaft. This KIP set the plan to mark KRaft ready, deprecate ZooKeeper mode and then remove it.</p>
+  <h4>Read these parts first</h4><p>The plan and timeline sections. I did not record the section names for this page <span class="tag-unverified">unverified</span>. <strong>Most useful:</strong> The timeline. It shows how a plan changes after a proposal is accepted.</p>
+  <h4>What to take from it</h4><ul><li>The page says the plan is to remove ZooKeeper mode entirely in Kafka 4.0. Reason given: avoid maintaining parallel code for important infrastructure such as the controller.</li><li>The page lists 3.7 as the "Final release with ZK mode". Do not rely on that. The 4.0 upgrade guide is the source of truth for what shipped.</li><li>The 4.0 guide says only KRaft mode is supported. This is the clearest example on this page of a proposal that the release notes overrule.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">You must upgrade a ZooKeeper-based cluster to 4.x. What is the path, and which release notes would you check first?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/05-kraft.html">Module 05 KRaft</a>, <a href="modules/09-operations.html">Module 09 Operations</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-833%3A+Mark+KRaft+as+Production+Ready" target="_blank" rel="noopener">KIP page</a> · <a href="https://kafka.apache.org/40/getting-started/upgrade/" target="_blank" rel="noopener">Kafka 4.0 upgrade guide</a></p>
+</article>
+<article class="card" id="kip-853" data-topics="controller">
+  <div class="card-head">
+    <div><div class="from">KIP-853 · <span class="pill">controller</span></div><h3>KIP-853: KRaft Controller Membership Changes</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-853"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>3.9.0. Source: Jira KAFKA-14094 (fix version 3.9.0, released 2024-11-07).</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>The set of controllers was fixed in a configuration file. An operator could not add a controller or replace a failed one without a manual, disruptive change.</p>
+  <h4>Read these parts first</h4><p>Motivation, Key terms, Proposed changes, User explanation, Reference explanation. The page also lists the new RPCs and the Admin client changes. <strong>Most useful:</strong> User explanation, then Reference explanation.</p>
+  <h4>What to take from it</h4><ul><li>An AddVoter RPC adds a controller to the voter set. The cluster does not need to stop all controllers.</li><li>Two new control records, KRaftVersionRecord and VotersRecord, store the voter set in the log and in snapshots. This replaces reliance on controller.quorum.voters.</li><li>With controller.quorum.auto.join.enable=true, a controller can join as an observer and then become a voter without a command-line step.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">Why is changing the voter set of a consensus group harder than changing any other piece of state?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/05-kraft.html">Module 05 KRaft</a></p><p class="small">Module 05 covers the quorum. It does not cover dynamic membership in depth.</p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-853%3A+KRaft+Controller+Membership+Changes" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-14094" target="_blank" rel="noopener">Jira KAFKA-14094</a></p>
+</article>
+<article class="card" id="kip-966" data-topics="replication controller">
+  <div class="card-head">
+    <div><div class="from">KIP-966 · <span class="pill">replication</span> <span class="pill">controller</span></div><h3>KIP-966: Eligible Leader Replicas</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-966"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>4.0, as a preview. Source: the Kafka 4.0 announcement ("introduces Eligible Leader Replicas (ELR) in preview in 4.0"). The 4.0 upgrade guide says KIP-966 Part 1 is in 4.0. The Jira ticket KAFKA-15332 is open. The release that made it the default: not confirmed <span class="tag-unverified">unverified</span>.</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>In a "last replica standing" case, an unclean shutdown can turn the data loss on one broker into loss for the whole partition. The KIP aims to tolerate such an event when min.insync.replicas is the limit.</p>
+  <h4>Read these parts first</h4><p>Motivation, Proposed Changes, Delivery Plan, Rejected Alternatives. <strong>Most useful:</strong> Proposed Changes. The Delivery Plan shows the parts that ship in stages.</p>
+  <h4>What to take from it</h4><ul><li>The high watermark advances only if the in-sync replica set (ISR) is at least min.insync.replicas in size.</li><li>ELR are replicas outside the ISR that are eligible to lead. They are guaranteed to hold the data at least up to the high watermark.</li><li>Three unclean recovery modes replace random unclean election: Aggressive, Balanced and None. None needs a manual step.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">What is the difference between being in the ISR and being an eligible leader replica? Why keep both?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/04-replication.html">Module 04 Replication</a>, <a href="modules/05-kraft.html">Module 05 KRaft</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-966%3A+Eligible+Leader+Replicas" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-15332" target="_blank" rel="noopener">Jira KAFKA-15332</a> · <a href="https://kafka.apache.org/blog/2025/03/18/apache-kafka-4.0.0-release-announcement/" target="_blank" rel="noopener">Kafka 4.0 announcement</a></p>
+</article>
+<article class="card" id="kip-405" data-topics="storage">
+  <div class="card-head">
+    <div><div class="from">KIP-405 · <span class="pill">storage</span></div><h3>KIP-405: Kafka Tiered Storage</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-405"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>3.6.0 (Jira KAFKA-7739, fix version 3.6.0, released 2023-10-10). The KIP page says it is production-ready since 3.9. How 3.6.0 labelled it: not confirmed <span class="tag-unverified">unverified</span>.</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>Large clusters hold all retained data on broker disks. That makes recovery and rebalancing slow and forces you to add brokers just to keep more history.</p>
+  <h4>Read these parts first</h4><p>Motivation, Goals and Non-Goals, High-level Design, RemoteLogManager, Follower Replication, Consumer Fetch Requests. The page has no Rejected Alternatives heading in my notes <span class="tag-unverified">unverified</span>. <strong>Most useful:</strong> High-level Design.</p>
+  <h4>What to take from it</h4><ul><li>There are two tiers. The local tier uses broker disks. The remote tier, such as HDFS or S3, stores completed log segments.</li><li>Segment metadata goes in an internal, non-compacted topic named __remote_log_metadata, with 50 partitions by default.</li><li>Followers copy only from the leader local storage. They build helper state from remote segments and may see OFFSET_MOVED_TO_TIERED_STORAGE.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">A consumer reads data that now lives only in remote storage. Which component serves it, and what does the broker disk still hold?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/09-operations.html">Module 09 Operations</a>, <a href="modules/14-tiered-storage-lab.html">Module 14 Tiered storage lab</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=97554472" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-7739" target="_blank" rel="noopener">Jira KAFKA-7739</a></p>
+</article>
+<article class="card" id="kip-932" data-topics="queues consumer">
+  <div class="card-head">
+    <div><div class="from">KIP-932 · <span class="pill">queues</span> <span class="pill">consumer</span></div><h3>KIP-932: Queues for Kafka</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-932"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>Early access in 4.0, preview in 4.1, production-ready in 4.2. Sources: the 4.0.0 announcement, the wiki preview notes (4.1) and the 4.2.0 announcement. The Jira ticket KAFKA-16092 shows no fix version.</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>In a consumer group, the number of useful consumers is capped by the number of partitions, and a consumer owns a partition. Queue-style work needs many workers and per-record acknowledgement.</p>
+  <h4>Read these parts first</h4><p>Motivation, Concepts, Record delivery and acknowledgement, Managing durable share-partition state. The page has no Rejected Alternatives heading in my notes <span class="tag-unverified">unverified</span>. <strong>Most useful:</strong> Concepts, then Record delivery and acknowledgement.</p>
+  <h4>What to take from it</h4><ul><li>Share groups use only server-side assignors, such as SimpleAssignor. Consumers do not own partitions exclusively.</li><li>Each acquired record has a lock that lasts 30 seconds by default. A delivery count caps redelivery at 5 by default.</li><li>State is kept in a new internal topic, __share_group_state, with 50 partitions by default. It is separate from __consumer_offsets.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">What do you lose by moving from a consumer group to a share group? Think about ordering.</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/03-consumers.html">Module 03 Consumers</a></p><p class="small">Early-access and preview builds were not compatible with each other. Read the 4.1 and 4.2 notes before you rely on old advice.</p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-932%3A+Queues+for+Kafka" target="_blank" rel="noopener">KIP page</a> · <a href="https://cwiki.apache.org/confluence/display/KAFKA/Queues+for+Kafka+%28KIP-932%29+-+Preview+Release+Notes" target="_blank" rel="noopener">Preview release notes (4.1)</a> · <a href="https://kafka.apache.org/blog/2026/02/17/apache-kafka-4.2.0-release-announcement/" target="_blank" rel="noopener">Kafka 4.2.0 announcement</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-16092" target="_blank" rel="noopener">Jira KAFKA-16092</a></p>
+</article>
+<article class="card" id="kip-382" data-topics="replication storage">
+  <div class="card-head">
+    <div><div class="from">KIP-382 · <span class="pill">replication</span> <span class="pill">storage</span></div><h3>KIP-382: MirrorMaker 2.0</h3></div>
+    <label class="rd"><input type="checkbox" data-read="kip-382"> Mark as read</label>
+  </div>
+  <dl>
+    <dt>Status (wiki page)</dt><dd>Accepted</dd>
+    <dt>First Kafka version</dt><dd>2.4.0. Source: Jira KAFKA-7500 (fix version 2.4.0, released 2019-12-16).</dd>
+  </dl>
+  <h4>The problem it solved</h4><p>The first MirrorMaker could not sync configuration between clusters and had no support for active/active use. MirrorMaker 2 is built on Kafka Connect and fixes both.</p>
+  <h4>Read these parts first</h4><p>Motivation, Proposed Changes, Remote Topics Partitions, Internal Topics, Rejected Alternatives. <strong>Most useful:</strong> Remote Topics, Partitions.</p>
+  <h4>What to take from it</h4><ul><li>Remote topics carry the source cluster alias as a prefix, for example us-west.topic1. That allows active/active replication and keeps partitioning and order.</li><li>Three internal topics hold heartbeats, checkpoints and offset syncs. All three are log-compacted.</li><li>Four ways to run it: a dedicated MirrorMaker cluster, a connector on a Connect cluster, a standalone worker, and a legacy mode.</li></ul>
+  <h4>Question to ask yourself</h4><p class="qq">Why does MirrorMaker 2 prefix topic names? What goes wrong in a two-way setup if it does not?</p>
+  <h4>Where this knowledge base covers it</h4><p><a href="modules/10-multi-cluster.html">Module 10 Multi-cluster</a></p>
+  <p class="src">Sources used: <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=95650722" target="_blank" rel="noopener">KIP page</a> · <a href="https://issues.apache.org/jira/browse/KAFKA-7500" target="_blank" rel="noopener">Jira KAFKA-7500</a></p>
+</article>
+</div>
+
+<h2 style="margin-top:3rem">Sources that are not proposals</h2>
+<div class="cards" id="others">
+<article class="card" id="src-log">
+  <div class="card-head">
+    <div><div class="from">Source, not a KIP</div><h3>The Log: What every software engineer should know about real-time data&#x27;s unifying abstraction</h3></div>
+    <label class="rd"><input type="checkbox" data-read="src-log"> Mark as read</label>
+  </div>
+  <dl><dt>By</dt><dd>Jay Kreps · LinkedIn Engineering · 2013</dd><dt>What I confirmed</dt><dd>Title, author and publisher confirmed from search results. The date (16 December 2013) comes from a search summary <span class="tag-unverified">unverified</span>. My direct fetch of the page returned an error.</dd></dl>
+  <h4>Why read it</h4><p>It explains the log as the core idea behind Kafka. Read it first. It is the shortest route to the right mental model.</p>
+  <h4>Where this knowledge base covers it</h4><p>The ideas appear in <a href="modules/02-producers.html">Module 02 Producers</a>, <a href="modules/01-the-log.html">Module 01 The log</a>.</p>
+  <p class="src">Sources used: <a href="https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying" target="_blank" rel="noopener">Article</a></p>
+</article>
+<article class="card" id="src-design">
+  <div class="card-head">
+    <div><div class="from">Source, not a KIP</div><h3>Apache Kafka documentation: the &quot;Design&quot; section</h3></div>
+    <label class="rd"><input type="checkbox" data-read="src-design"> Mark as read</label>
+  </div>
+  <dl><dt>By</dt><dd>Apache Kafka project · kept up to date with each release</dd><dt>What I confirmed</dt><dd>The documentation menu lists a section named Design. I could not read its list of subsections, so I do not name them here <span class="tag-unverified">unverified</span>.</dd></dl>
+  <h4>Why read it</h4><p>It states the intended trade-offs in the project's own words: storage, delivery guarantees, replication. Use it to check what you read in a KIP.</p>
+  <h4>Where this knowledge base covers it</h4><p>The ideas appear in <a href="modules/04-replication.html">Module 04 Replication</a>, <a href="modules/01-the-log.html">Module 01 The log</a>.</p>
+  <p class="src">Sources used: <a href="https://kafka.apache.org/documentation/#design" target="_blank" rel="noopener">Documentation, Design</a></p>
+</article>
+<article class="card" id="src-raft">
+  <div class="card-head">
+    <div><div class="from">Source, not a KIP</div><h3>In Search of an Understandable Consensus Algorithm</h3></div>
+    <label class="rd"><input type="checkbox" data-read="src-raft"> Mark as read</label>
+  </div>
+  <dl><dt>By</dt><dd>Diego Ongaro and John Ousterhout · USENIX Annual Technical Conference 2014</dd><dt>What I confirmed</dt><dd>Title, authors and venue confirmed from the USENIX listing in search results. The paper won Best Paper at that conference.</dd></dl>
+  <h4>Why read it</h4><p>It defines Raft, the protocol behind KRaft. Read it before KIP-595 and KIP-853.</p>
+  <h4>Where this knowledge base covers it</h4><p>The ideas appear in <a href="modules/05-kraft.html">Module 05 KRaft</a>.</p>
+  <p class="src">Sources used: <a href="https://raft.github.io/raft.pdf" target="_blank" rel="noopener">Paper (PDF)</a> · <a href="https://www.usenix.org/node/184041" target="_blank" rel="noopener">USENIX page</a></p>
+</article>
+<article class="card" id="src-kdg">
+  <div class="card-head">
+    <div><div class="from">Source, not a KIP</div><h3>Kafka: The Definitive Guide</h3></div>
+    <label class="rd"><input type="checkbox" data-read="src-kdg"> Mark as read</label>
+  </div>
+  <dl><dt>By</dt><dd>First edition: Neha Narkhede, Gwen Shapira and Todd Palino · O'Reilly · September 2017</dd><dt>What I confirmed</dt><dd>First edition details confirmed from search results. A second edition exists, by Gwen Shapira, Todd Palino, Rajini Sivaram and Krit Petty. Its year: not confirmed <span class="tag-unverified">unverified</span>.</dd></dl>
+  <h4>Why read it</h4><p>The standard book on running and using Kafka. The first edition is old, so check version-specific advice against the release notes.</p>
+  <h4>Where this knowledge base covers it</h4><p>The ideas appear in <a href="modules/02-producers.html">Module 02 Producers</a>, <a href="modules/03-consumers.html">Module 03 Consumers</a>, <a href="modules/09-operations.html">Module 09 Operations</a>.</p>
+  <p class="src">Sources used: <a href="https://www.oreilly.com/library/view/kafka-the-definitive/9781491936153/" target="_blank" rel="noopener">O&#x27;Reilly page (first edition)</a></p>
+</article>
+<article class="card" id="src-ddia">
+  <div class="card-head">
+    <div><div class="from">Source, not a KIP</div><h3>Designing Data-Intensive Applications</h3></div>
+    <label class="rd"><input type="checkbox" data-read="src-ddia"> Mark as read</label>
+  </div>
+  <dl><dt>By</dt><dd>Martin Kleppmann · O'Reilly · first edition 2017</dd><dt>What I confirmed</dt><dd>The first edition (2017) and the second edition are confirmed from search results. The second edition appeared in February 2026 and adds Chris Riccomini as an author. I did not open a publisher page for the exact date <span class="tag-unverified">unverified</span>.</dd></dl>
+  <h4>Why read it</h4><p>It teaches replication, consistency, consensus and logs across many systems. It is the book to read for the "why" behind Kafka.</p>
+  <h4>Where this knowledge base covers it</h4><p>The ideas appear in <a href="modules/04-replication.html">Module 04 Replication</a>, <a href="modules/05-kraft.html">Module 05 KRaft</a>.</p>
+  <p class="src">Sources used: <a href="https://martin.kleppmann.com/2026/03/24/designing-data-intensive-applications-2e.html" target="_blank" rel="noopener">Author page for the second edition</a> · <a href="https://www.oreilly.com/library/view/designing-data-intensive-applications/9781098119058/" target="_blank" rel="noopener">O&#x27;Reilly page</a></p>
+</article>
+</div>
+
+</div>
+</main>
+<script src="assets/kb.js"></script>
+<script>
+(function () {
+  var KEY = 'kb-reading';
+  var read = {};
+  try { var raw = localStorage.getItem(KEY); if (raw) read = JSON.parse(raw) || {}; } catch (e) { read = {}; }
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('input[data-read]'));
+  var cards = Array.prototype.slice.call(document.querySelectorAll('#kips .card'));
+  var topic = document.getElementById('topic');
+  var hide = document.getElementById('hide-read');
+  var status = document.getElementById('status');
+
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(read)); } catch (e) { /* storage blocked: marks last for this page only */ } }
+  function apply() {
+    var t = topic.value, shown = 0;
+    cards.forEach(function (c) {
+      var id = c.id;
+      var okTopic = t === 'all' || c.dataset.topics.split(' ').indexOf(t) !== -1;
+      var okRead = !(hide.checked && read[id]);
+      c.hidden = !(okTopic && okRead);
+      if (!c.hidden) shown++;
+    });
+    var done = boxes.filter(function (b) { return b.checked; }).length;
+    status.textContent = 'Showing ' + shown + ' of ' + cards.length + ' proposals. You have marked ' + done + ' of ' + boxes.length + ' items as read.';
+  }
+  boxes.forEach(function (b) {
+    var id = b.dataset.read;
+    b.checked = !!read[id];
+    b.closest('.card').classList.toggle('is-read', b.checked);
+    b.addEventListener('change', function () {
+      if (b.checked) read[id] = 1; else delete read[id];
+      b.closest('.card').classList.toggle('is-read', b.checked);
+      save(); apply();
+    });
+  });
+  topic.addEventListener('change', apply);
+  hide.addEventListener('change', apply);
+  apply();
+})();
+</script>
+</body>
+</html>

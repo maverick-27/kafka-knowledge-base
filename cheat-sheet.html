@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat sheet · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+<style>
+  .sheet { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); gap: 1rem; align-items: start; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem; min-width: 0; }
+  .card h2 { font-size: 1.15rem; margin-bottom: .2rem; }
+  .card .from { font: 500 .78rem var(--mono); color: var(--muted); margin-bottom: .6rem; }
+  .card h3 { font: 600 .85rem var(--body); color: var(--muted); margin: .9rem 0 .3rem; }
+  .card pre { font-size: .8rem; padding: 2.5rem .8rem .7rem; }
+  .card .code { margin: .3rem 0; }
+  @media print {
+    .topbar, .copy { display: none !important; }
+    body { background: #fff; color: #000; font-size: 11px; }
+    .card { break-inside: avoid; border-color: #999; }
+    pre { background: #f2f2f2 !important; color: #000 !important; border: 1px solid #ccc; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ cheat sheet</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="hero">
+  <div class="eyebrow">Kafka 4.3 · commands from the labs</div>
+  <h1>Cheat sheet</h1>
+  <p class="lede">The commands and settings you will reach for most. Each card names the module that explains it. Use your browser's print function for a paper copy.</p>
+</div>
+
+<div class="wide">
+
+<div class="note">
+  <p><strong>Set-up used on this page.</strong> The helper <code>k</code> runs a Kafka tool inside the first lab broker, and <code>B</code> is the address of the cluster from inside the containers.</p>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092</code></pre></div>
+  <p>Kafka 4.2 and later renamed some tool flags. Use <code>--reader-property</code> for the console producer, <code>--formatter-property</code> for the console consumer, and <code>--command-property</code> for client settings. The performance tool takes several settings after one <code>--command-property</code>, separated by spaces.</p>
+</div>
+
+<div class="sheet">
+
+<div class="card">
+  <h2>Topics</h2><div class="from">modules 01, 09</div>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --list
+k kafka-topics.sh --bootstrap-server $B --describe --topic orders
+k kafka-topics.sh --bootstrap-server $B --create --topic orders \
+  --partitions 3 --replication-factor 3
+k kafka-topics.sh --bootstrap-server $B --create --topic t \
+  --replica-assignment 3:1:2          # exact brokers; no --partitions
+k kafka-topics.sh --bootstrap-server $B --alter --topic orders --partitions 6
+k kafka-topics.sh --bootstrap-server $B --delete --topic orders</code></pre></div>
+  <p>The partition count can only go up, and raising it moves keys.</p>
+</div>
+
+<div class="card">
+  <h2>Topic and broker settings</h2><div class="from">modules 01, 09</div>
+  <div class="code"><pre><code>k kafka-configs.sh --bootstrap-server $B --describe \
+  --entity-type topics --entity-name orders --all
+k kafka-configs.sh --bootstrap-server $B --alter \
+  --entity-type topics --entity-name orders --add-config retention.ms=86400000
+k kafka-configs.sh --bootstrap-server $B --alter \
+  --entity-type topics --entity-name orders --delete-config retention.ms
+k kafka-configs.sh --bootstrap-server $B --describe \
+  --entity-type brokers --entity-name 1 --all
+k kafka-configs.sh --bootstrap-server $B --alter \
+  --entity-type brokers --entity-default --add-config log.cleaner.threads=2</code></pre></div>
+</div>
+
+<div class="card">
+  <h2>Produce and consume by hand</h2><div class="from">modules 01, 02</div>
+  <div class="code"><pre><code>k kafka-console-producer.sh --bootstrap-server $B --topic orders \
+  --reader-property parse.key=true --reader-property key.separator=:
+
+k kafka-console-consumer.sh --bootstrap-server $B --topic orders \
+  --from-beginning --formatter-property print.key=true \
+  --formatter-property print.partition=true \
+  --formatter-property print.offset=true
+
+k kafka-console-consumer.sh --bootstrap-server $B --topic payments \
+  --from-beginning --isolation-level read_committed</code></pre></div>
+</div>
+
+<div class="card">
+  <h2>Offsets and files</h2><div class="from">module 01</div>
+  <div class="code"><pre><code>k kafka-get-offsets.sh --bootstrap-server $B --topic orders
+k kafka-get-offsets.sh --bootstrap-server $B --topic orders --time earliest
+
+docker exec kafka-1 ls /tmp/kraft-combined-logs/orders-0
+k kafka-dump-log.sh --print-data-log \
+  --files /tmp/kraft-combined-logs/orders-0/00000000000000000000.log
+
+k kafka-log-dirs.sh --bootstrap-server $B --describe --broker-list 1</code></pre></div>
+</div>
+
+<div class="card">
+  <h2>Load tests</h2><div class="from">module 02</div>
+  <div class="code"><pre><code>k kafka-producer-perf-test.sh --topic perf --num-records 300000 \
+  --record-size 200 --throughput -1 \
+  --command-property bootstrap.servers=$B batch.size=131072 linger.ms=20
+
+# in transactions, one commit each second
+k kafka-producer-perf-test.sh --topic payments --num-records 30 \
+  --record-size 20 --throughput 10 --transactional-id pay-1 \
+  --transaction-duration-ms 1000 --command-property bootstrap.servers=$B</code></pre></div>
+</div>
+
+<div class="card">
+  <h2>Consumer groups and lag</h2><div class="from">module 03</div>
+  <div class="code"><pre><code>k kafka-consumer-groups.sh --bootstrap-server $B --list
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g --members
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g --state
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --all-groups
+
+# move a group; it must have no members. Look first with --dry-run.
+k kafka-consumer-groups.sh --bootstrap-server $B --group g --topic events \
+  --reset-offsets --to-earliest --dry-run
+#   other targets: --to-latest  --to-datetime  --to-offset  --shift-by -100
+#   then replace --dry-run with --execute</code></pre></div>
+</div>
+
+<div class="card">
+  <h2>Health in three commands</h2><div class="from">modules 04, 09</div>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --describe --unavailable-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-min-isr-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-replicated-partitions</code></pre></div>
+  <p>No output means healthy. Run all three before and after every restart.</p>
+</div>
+
+<div class="card">
+  <h2>Leaders and replicas</h2><div class="from">module 04</div>
+  <div class="code"><pre><code>k kafka-leader-election.sh --bootstrap-server $B \
+  --election-type preferred --topic t --partition 0
+k kafka-leader-election.sh --bootstrap-server $B \
+  --election-type unclean --topic t --partition 0      # loses data
+
+k kafka-reassign-partitions.sh --bootstrap-server $B \
+  --reassignment-json-file /tmp/move.json --execute    # add --throttle
+k kafka-reassign-partitions.sh --bootstrap-server $B \
+  --reassignment-json-file /tmp/move.json --verify
+
+k kafka-delete-records.sh --bootstrap-server $B --offset-json-file /tmp/del.json</code></pre></div>
+</div>
+
+<div class="card">
+  <h2>Controllers and metadata</h2><div class="from">module 05</div>
+  <div class="code"><pre><code>k kafka-metadata-quorum.sh --bootstrap-server $B describe --status
+k kafka-metadata-quorum.sh --bootstrap-server $B describe --replication
+k kafka-cluster.sh cluster-id --bootstrap-server $B
+k kafka-features.sh --bootstrap-server $B describe
+k kafka-broker-api-versions.sh --bootstrap-server $B | grep '^kafka-'
+
+k kafka-dump-log.sh --cluster-metadata-decoder --files \
+  /tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log</code></pre></div>
+</div>
+
+<div class="card">
+  <h2>Transactions</h2><div class="from">module 06</div>
+  <div class="code"><pre><code>k kafka-transactions.sh --bootstrap-server $B list
+k kafka-transactions.sh --bootstrap-server $B describe --transactional-id pay-1
+k kafka-transactions.sh --bootstrap-server $B find-hanging --broker-id 1
+k kafka-transactions.sh --bootstrap-server $B describe-producers \
+  --topic payments --partition 0</code></pre></div>
+  <p>The first two were run in the lab. The last two exist in the tool's help; I did not run them.</p>
+</div>
+
+<div class="card">
+  <h2>Kafka Streams</h2><div class="from">module 07</div>
+  <div class="code"><pre><code># read counts written as 8-byte numbers
+k kafka-console-consumer.sh --bootstrap-server $B --topic streams-wordcount-output \
+  --from-beginning --formatter-property print.key=true \
+  --formatter-property value.deserializer=org.apache.kafka.common.serialization.LongDeserializer
+
+# start over: the group must be empty
+k kafka-streams-application-reset.sh --bootstrap-server $B \
+  --application-id streams-wordcount --input-topics streams-plaintext-input --dry-run</code></pre></div>
+  <p>On Alpine images, install <code>libstdc++</code> first, or the state store fails to load.</p>
+</div>
+
+<div class="card">
+  <h2>Kafka Connect, over HTTP on port 8083</h2><div class="from">module 08</div>
+  <div class="code"><pre><code>GET    /connector-plugins
+GET    /connectors
+POST   /connectors                      {"name": …, "config": {…}}
+GET    /connectors/NAME/status          check every task's state
+GET    /connectors/NAME/offsets
+POST   /connectors/NAME/tasks/0/restart
+DELETE /connectors/NAME</code></pre></div>
+  <p>The first four and the create call were run in the lab. Restart and delete are the standard calls; I did not run them.</p>
+</div>
+
+<div class="card">
+  <h2>Schema registry, on port 8086 in the lab</h2><div class="from">module 08</div>
+  <div class="code"><pre><code>R=http://localhost:8086
+H='Content-Type: application/vnd.schemaregistry.v1+json'
+curl -s $R/config
+curl -s $R/subjects/orders-value/versions
+curl -s -X POST -H "$H" -d "$SCHEMA" $R/subjects/orders-value/versions
+curl -s -X POST -H "$H" -d "$SCHEMA" \
+  "$R/compatibility/subjects/orders-value/versions/latest?verbose=true"
+curl -s -X PUT -H "$H" -d '{"compatibility":"FULL"}' $R/config/orders-value</code></pre></div>
+</div>
+
+<div class="card">
+  <h2>Quotas, share groups, second cluster</h2><div class="from">modules 09, 10</div>
+  <div class="code"><pre><code>k kafka-configs.sh --bootstrap-server $B --alter \
+  --add-config 'producer_byte_rate=5242880' \
+  --entity-type clients --entity-name slow-client
+
+k kafka-console-share-consumer.sh --bootstrap-server $B --topic jobs --group workers
+k kafka-share-groups.sh --bootstrap-server $B --describe --group workers --members
+
+docker exec -d kafka-1 /opt/kafka/bin/connect-mirror-maker.sh /tmp/mm2.properties</code></pre></div>
+</div>
+
+</div>
+
+<p class="note" style="margin-top:2rem">More commands, with real outputs, are in the labs: <a href="modules/11-security-lab.html">security</a>, <a href="modules/12-monitoring-lab.html">monitoring</a>, <a href="modules/13-cdc-outbox-lab.html">change data capture</a> and <a href="modules/14-tiered-storage-lab.html">tiered storage</a>. For practice: <a href="drills.html">failure drills</a> and <a href="interview.html">mock interview</a>. For experience: <a href="case-studies.html">case studies</a> and <a href="projects.html">projects</a>.</p>
+
+<h2 style="margin-top:3rem">Settings to start from</h2>
+<p>These are the choices the modules argue for. Change them when you have a measured reason.</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Where</th><th>Setting</th><th>Value</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Topic</td><td>replication factor</td><td>3</td><td>Survives one broker failure with protection left.</td></tr>
+      <tr><td>Topic</td><td><code>min.insync.replicas</code></td><td>2</td><td>An acknowledged record is on two brokers. The default of 1 is not safe.</td></tr>
+      <tr><td>Topic</td><td><code>unclean.leader.election.enable</code></td><td><code>false</code> (default)</td><td>No silent loss of committed records.</td></tr>
+      <tr><td>Topic, low volume</td><td><code>segment.ms</code></td><td>near the retention time</td><td>Otherwise data outlives retention by up to 7 days.</td></tr>
+      <tr><td>Producer</td><td><code>acks</code>, <code>enable.idempotence</code></td><td><code>all</code>, <code>true</code> (defaults)</td><td>No loss on failover, no duplicates from retries.</td></tr>
+      <tr><td>Producer, for throughput</td><td><code>batch.size</code>, <code>linger.ms</code>, <code>compression.type</code></td><td>131072, 20, <code>lz4</code></td><td>The lab measured 54 times more throughput from batching alone.</td></tr>
+      <tr><td>Producer</td><td><code>client.id</code></td><td>the application's name</td><td>Logs, metrics and quotas all use it.</td></tr>
+      <tr><td>Consumer</td><td><code>enable.auto.commit</code></td><td><code>false</code> when loss matters</td><td>Commit only what is finished.</td></tr>
+      <tr><td>Consumer</td><td><code>auto.offset.reset</code></td><td>chosen on purpose</td><td>The default <code>latest</code> makes a new group skip existing data.</td></tr>
+      <tr><td>Consumer</td><td><code>group.protocol</code></td><td><code>consumer</code> for new Java applications</td><td>Only affected partitions stop in a rebalance.</td></tr>
+      <tr><td>Consumer of transactional topics</td><td><code>isolation.level</code></td><td><code>read_committed</code></td><td>The default shows aborted records.</td></tr>
+      <tr><td>Broker</td><td><code>default.replication.factor</code></td><td>3</td><td>The default of 1 creates unprotected topics.</td></tr>
+      <tr><td>Broker</td><td><code>auto.create.topics.enable</code></td><td><code>false</code></td><td>A typing error should not create a topic.</td></tr>
+      <tr><td>Broker</td><td><code>broker.rack</code></td><td>the zone</td><td>Replicas are spread over zones.</td></tr>
+      <tr><td>Cluster</td><td>controllers</td><td>3, on their own servers</td><td>Survives one failure; not disturbed by broker load.</td></tr>
+      <tr><td>Kafka Streams</td><td><code>state.dir</code></td><td>a durable disk</td><td>The default temporary directory can be cleared.</td></tr>
+      <tr><td>Kafka Connect sink</td><td><code>errors.tolerance</code> with a dead-letter topic</td><td><code>all</code>, plus context headers</td><td>One bad record should not stop the pipeline, and should not vanish.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Numbers worth remembering</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>What</th><th>Default</th></tr></thead>
+    <tbody>
+      <tr><td>Retention, and time-based segment roll</td><td>7 days each</td></tr>
+      <tr><td>Segment size</td><td>1 GiB</td></tr>
+      <tr><td>Retention check</td><td>every 5 minutes</td></tr>
+      <tr><td>Largest record batch</td><td>about 1 MiB</td></tr>
+      <tr><td>Producer batch size and linger</td><td>16384 bytes, 5 ms</td></tr>
+      <tr><td>Producer delivery timeout</td><td>2 minutes</td></tr>
+      <tr><td>Consumer session timeout, poll interval, records in a poll</td><td>45 seconds, 5 minutes, 500</td></tr>
+      <tr><td>Follower out of sync after</td><td>30 seconds</td></tr>
+      <tr><td>Broker fenced after</td><td>9 seconds without a heartbeat</td></tr>
+      <tr><td>Transaction timeout, and the most a client may ask</td><td>1 minute, 15 minutes</td></tr>
+      <tr><td>Idle group's offsets kept for</td><td>7 days</td></tr>
+      <tr><td>Internal topics <code>__consumer_offsets</code>, <code>__transaction_state</code></td><td>50 partitions each</td></tr>
+      <tr><td>Share group record lock, delivery limit</td><td>30 seconds, 5</td></tr>
+    </tbody>
+  </table>
+</div>
+
+</div>
+</main>
+<script src="assets/kb.js"></script>
+</body>
+</html>

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projects · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+<style>
+  .proj { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem; margin: 1.5rem 0; min-width: 0; }
+  .proj-head { display: flex; flex-wrap: wrap; gap: .6rem 1rem; justify-content: space-between; align-items: flex-start; }
+  .proj h2 { margin: 0; font-size: 1.35rem; }
+  .proj h3 { font: 600 .95rem var(--body); color: var(--muted); margin: 1.2rem 0 .4rem; }
+  .proj-meta { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .pill { font: 500 .78rem var(--mono); border: 1px solid var(--line); border-radius: 999px; padding: .15rem .6rem; color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin: .7rem 0; }
+  .bar progress { flex: 1 1 12rem; height: 1.1rem; accent-color: var(--read); }
+  .bar .readout { margin: 0; padding: .3rem .6rem; }
+  .miles label.rubric { padding: .3rem 0; font-size: .95rem; }
+  .jump { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+  .proj .code, .proj .table-wrap { max-width: 100%; }
+  .proj p, .proj li { overflow-wrap: anywhere; }
+  .proj a:focus-visible, .jump a:focus-visible { outline: 2px solid var(--read); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ projects</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="hero">
+  <div class="eyebrow">Kafka 4.3 · five projects</div>
+  <h1>Projects we will work on</h1>
+  <p class="lede">Five projects that give you the thing reading cannot: a system that went wrong and a story you can tell about it. Each project ends with a story in five parts.</p>
+</div>
+
+<div class="wide">
+
+<div class="note warn">
+  <p><strong>Status of this page.</strong> No project here was run as a whole. Every command is copied from a module or from the capstone page, and every outcome is described, not predicted. Where a step uses something no module shows, it carries the tag <span class="tag-unverified">unverified</span> and the words "not run in the labs". Time estimates are guesses, not measurements. Numbers such as 5,000 partitions are targets to attempt. Your laptop may not reach them.</p>
+</div>
+
+<h2>How to choose</h2>
+<p>Pick one project at a time. Start with C or B if this is your first. Project A takes the longest and teaches the most about time.</p>
+<div class="table-wrap"><table><thead><tr><th>Project</th><th>Difficulty (1 to 3)</th><th>Weeks</th><th>The story it gives you</th><th>Compose profile</th></tr></thead><tbody><tr><td><a href="#proj-a">A. Order-to-settlement capstone</a></td><td>3</td><td>4 to 8</td><td>A system that ran for weeks and failed in ways a one-hour lab does not.</td><td><code>cdc</code> and <code>monitoring</code></td></tr><tr><td><a href="#proj-b">B. Scale lab</a></td><td>2</td><td>1</td><td>Where a cluster starts to hurt, and how you measure it.</td><td>none (monitoring helps for JMX)</td></tr><tr><td><a href="#proj-c">C. Incident replay</a></td><td>2</td><td>2</td><td>Three incident reports in a fixed format.</td><td>none (monitoring helps)</td></tr><tr><td><a href="#proj-d">D. Lag monitor for Kafka 4.3</a></td><td>3</td><td>2</td><td>A tool broke after an upgrade, and you built the replacement.</td><td><code>monitoring</code></td></tr><tr><td><a href="#proj-e">E. Failover rehearsal</a></td><td>3</td><td>1 to 2</td><td>A timed failover, with the real cost of a copy.</td><td>none; start <code>kafka-dr</code> by name</td></tr></tbody></table></div>
+<p>Four of the five need only the main cluster. See the <a href="cheat-sheet.html">cheat sheet</a> for the set-up used in the modules.</p>
+
+<h2>Rules for all projects</h2>
+<ul><li><strong>Write down every number.</strong> Copy the command and its output into your log at the moment you run it. Memory changes the story.</li><li><strong>Keep a log file.</strong> One file per project, with a line for each action, in the format below. Write your guess before the run, not after.</li><li><strong>Run the three health checks before and after.</strong> They come from module 09, step 1. Output means something is wrong. No output means healthy.</li><li><strong>Never claim a result you did not measure.</strong> If you did not run it, say "I did not run it". This is not a weakness. It is the sentence that makes the rest believable.</li><li>Run one project at a time. If the cluster is left broken, <code>docker compose down</code> then <code>docker compose up -d</code>. This removes container data.</li></ul>
+<h3>Log file format</h3>
+<div class="code"><pre><code>2026-10-05 14:02  START   project X, step 3. Cluster: 3 brokers, all up.
+2026-10-05 14:02  HEALTH  three checks: all empty (before)
+2026-10-05 14:09  DID     &lt;the exact command, copied&gt;
+2026-10-05 14:09  SAW     &lt;the exact output or number, copied&gt;
+2026-10-05 14:31  GUESS   &lt;what I expected before I ran it&gt;   (write this BEFORE the run)
+2026-10-05 14:50  HEALTH  three checks: &lt;empty or the lines they printed&gt; (after)</code></pre></div>
+<h3>Helpers and health checks</h3>
+<p>Paste these into every new terminal. The <code>J</code> helper needs the monitoring profile, as in module 12.</p>
+<div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+dr() { docker exec -i kafka-dr /opt/kafka/bin/"$@"; }
+B=kafka-1:19092
+D=kafka-dr:19092
+d() { k kafka-topics.sh --bootstrap-server $B --describe --topic $1 | tail -1; }
+J() { docker exec -i kafka-1 timeout 20 /opt/kafka/bin/kafka-jmx.sh \
+  --jmx-url service:jmx:rmi:///jndi/rmi://localhost:9101/jmxrmi \
+  --one-time true --report-format properties --object-name "$1"; }</code></pre></div>
+<p>The three health checks (module 09, step 1). If broker 1 is stopped, use another broker, as module 05 does.</p>
+<div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --describe --unavailable-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-min-isr-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-replicated-partitions</code></pre></div>
+
+<h2>Your progress</h2>
+<div class="note" aria-live="polite">
+  <div class="bar"><strong>All projects</strong>
+    <progress id="prog" max="1" value="0" aria-label="Overall progress"></progress>
+    <span class="readout" id="prog-text">0 of 0</span>
+    <button class="btn" type="button" id="reset">Clear ticks</button>
+  </div>
+  <p>Your ticks are saved in this browser only.</p>
+</div>
+
+<h2>Project board</h2>
+<nav class="jump" aria-label="Jump to a project">
+  <a class="btn" href="#proj-a">A. Capstone</a><a class="btn" href="#proj-b">B. Scale lab</a><a class="btn" href="#proj-c">C. Incidents</a><a class="btn" href="#proj-d">D. Lag monitor</a><a class="btn" href="#proj-e">E. Failover</a>
+</nav>
+<section class="proj" id="proj-a" aria-labelledby="h-a" data-proj="a">
+<div class="proj-head"><div><div class="eyebrow">Project A</div><h2 id="h-a">Order-to-settlement capstone</h2></div><div class="proj-meta"><span class="pill">Difficulty 3 of 3</span><span class="pill">4 to 8 weeks</span><span class="pill">80 to 120 hours (estimate)</span></div></div>
+<div class="bar"><progress max="8" value="0" data-prog="a" aria-label="Progress for project A"></progress><span class="readout" data-prog-text="a">0 of 8</span></div>
+<h3>Purpose</h3><p>This is the long project. You build one small order system on the lab cluster: a database, a connector that publishes events, a safe consumer, a Kafka Streams job, monitoring and a weekly failure drill. You keep it running for weeks. It is the only project here that teaches what a system does over time.</p><p>The full plan, requirements R1 to R11 and the starter files live on the capstone page. This card does not repeat them. It only tracks the eight weeks.</p>
+<h3>Spec</h3><ul><li>Read <a href="capstone.html">capstone.html</a> and <code>capstone/README.md</code> first. Both say the starter files were not run end to end.</li><li>Needs the <code>cdc</code> and <code>monitoring</code> profiles together, as the capstone page says.</li><li>The spec, the acceptance tests and the design choices are on <a href="capstone.html">the capstone page</a>. Use them there.</li></ul>
+<h3>Eight milestones</h3><div class="miles"><label class="rubric" for="a-m1"><input type="checkbox" data-ck data-proj="a" id="a-m1"><span>Week 1. Environment and topics</span></label><label class="rubric" for="a-m2"><input type="checkbox" data-ck data-proj="a" id="a-m2"><span>Week 2. Outbox and capture</span></label><label class="rubric" for="a-m3"><input type="checkbox" data-ck data-proj="a" id="a-m3"><span>Week 3. Consumer safe to repeat</span></label><label class="rubric" for="a-m4"><input type="checkbox" data-ck data-proj="a" id="a-m4"><span>Week 4. Streams job</span></label><label class="rubric" for="a-m5"><input type="checkbox" data-ck data-proj="a" id="a-m5"><span>Week 5. Schemas and a breaking-change rehearsal</span></label><label class="rubric" for="a-m6"><input type="checkbox" data-ck data-proj="a" id="a-m6"><span>Week 6. Monitoring and alerts</span></label><label class="rubric" for="a-m7"><input type="checkbox" data-ck data-proj="a" id="a-m7"><span>Week 7. Load test and the written limit</span></label><label class="rubric" for="a-m8"><input type="checkbox" data-ck data-proj="a" id="a-m8"><span>Week 8. Failure-drill week and the stories</span></label></div>
+<h3>Acceptance tests</h3><p>Each week has its own tests on the capstone page. Tick a week here only when its tests pass and you have written down what you saw. The full test list is in <code>capstone/acceptance-tests.md</code>.</p>
+<h3>What to measure</h3><p>Each capstone week lists what to measure. Examples from that page: time from a cold start to a ready cluster, delay from database commit to topic, replication slot size while the connector is stopped, and the highest rate with flat lag. Follow that page.</p>
+<h3>The story it produces</h3><p>Eight weeks give about eight stories. The capstone page has a table of the five-part shape with an example from week 2. Use the same shape for every week. The template below is a blank copy.</p>
+<details class="qa"><summary>Fill-in template for this story</summary><div class="answer"><div class="code"><pre><code>Situation:         I was building ___ . What mattered was ___ .
+What I saw:        ___ (output, numbers, symptoms; copy them from the log)
+What I decided:    ___ . I rejected ___ because ___ .
+What I got wrong:  ___ (the part interviewers trust most)
+What I changed:    ___ , and I measured the change as ___ .</code></pre></div></div></details>
+</section>
+<section class="proj" id="proj-b" aria-labelledby="h-b" data-proj="b">
+<div class="proj-head"><div><div class="eyebrow">Project B</div><h2 id="h-b">Scale lab: how many partitions can the lab hold?</h2></div><div class="proj-meta"><span class="pill">Difficulty 2 of 3</span><span class="pill">1 week</span><span class="pill">10 to 15 hours (estimate)</span></div></div>
+<div class="bar"><progress max="8" value="0" data-prog="b" aria-label="Progress for project B"></progress><span class="readout" data-prog-text="b">0 of 8</span></div>
+<h3>Purpose</h3><p>Module 09 says too many partitions is a failure, but gives no feel for where "too many" starts. In this project you add partitions in steps and watch what each step costs: creation time, memory, restart time, failover time, and the size of the cluster metadata log. You will not find a universal limit. You will learn which number moves first and how to measure it.</p>
+<h3>Spec</h3><ul><li>Main three-broker cluster only. The monitoring profile is optional, and helps for JMX.</li><li>Create topics with replication factor 3 in steps of total partitions: for example 500, 1,000, 2,000 and 5,000. These are targets to attempt.</li><li>After each step: run the three health checks, record every measurement in the table below, then go on.</li><li>Run the restart test and the failover test at the smallest step and again at the largest step you reach.</li><li>Keep the Docker memory stop rule, below.</li></ul>
+<h3>The loop</h3><p>The topic command is the one from modules 01 and 03. The loop around it is yours to adapt.</p><div class="code"><pre><code># one step: add 5 topics of 100 partitions each (500 partitions in this step)
+for i in $(seq 1 5); do
+  k kafka-topics.sh --bootstrap-server $B --create --topic scale-a-$i \
+    --partitions 100 --replication-factor 3
+done
+# next steps: change the topic names (scale-b-..., scale-c-...) and the counts.
+# every partition has 3 copies, so 500 partitions mean 1,500 replicas in the cluster.</code></pre></div><div class="note warn"><p><strong>Stop rule.</strong> The 1,000 to 5,000 partitions are a target to attempt. Your laptop may not reach it. Watch the memory Docker Desktop shows. If Docker runs out of memory, a broker container exits, or a command stops answering, stop and write down the last step that worked. Do not push on. To clean up, use <code>docker compose down</code> and <code>docker compose up -d</code> in the main folder. Drills say this removes the container data.</p><p>Real hardware differs from a laptop in memory, disk speed and network. Never say "Kafka handles N partitions" from this project. Say "my three-container lab did or did not hold N".</p></div><h3>Eight milestones</h3><div class="miles"><label class="rubric" for="b-m1"><input type="checkbox" data-ck data-proj="b" id="b-m1"><span>Read modules 04, 05, 09 and 12 labs again and paste the helpers into a new log file</span></label><label class="rubric" for="b-m2"><input type="checkbox" data-ck data-proj="b" id="b-m2"><span>Health checks empty. Baseline row recorded before any scale topic exists</span></label><label class="rubric" for="b-m3"><input type="checkbox" data-ck data-proj="b" id="b-m3"><span>Step 1 (about 500 partitions): all measurements recorded</span></label><label class="rubric" for="b-m4"><input type="checkbox" data-ck data-proj="b" id="b-m4"><span>Step 2 (about 1,000 partitions): all measurements recorded</span></label><label class="rubric" for="b-m5"><input type="checkbox" data-ck data-proj="b" id="b-m5"><span>Step 3 (about 2,000 partitions): all measurements recorded, or the stop reason written</span></label><label class="rubric" for="b-m6"><input type="checkbox" data-ck data-proj="b" id="b-m6"><span>Step 4 (about 5,000 partitions): attempted, measured or stopped with a reason</span></label><label class="rubric" for="b-m7"><input type="checkbox" data-ck data-proj="b" id="b-m7"><span>Restart test and failover test done at the smallest and the largest step</span></label><label class="rubric" for="b-m8"><input type="checkbox" data-ck data-proj="b" id="b-m8"><span>One-page conclusion and the five-part story written</span></label></div>
+<h3>Acceptance tests</h3><div class="table-wrap"><table><thead><tr><th>Test</th><th>What you do</th><th>What a pass looks like</th></tr></thead><tbody><tr><td>B1 Every step ran</td><td>Create partitions in steps, for example 500, 1,000, 2,000 and 5,000 in total.</td><td>You have one filled row for each step you reached. For a step you did not reach, the row says why you stopped.</td></tr><tr><td>B2 Clean after each step</td><td>Run the three health checks after each step.</td><td>All three print nothing before you go on. If a check prints lines, you wait, write down how long, and only then go on.</td></tr><tr><td>B3 Restart timed</td><td>Stop one broker, start it, and poll the third health check.</td><td>A time in seconds from the start command until the check prints nothing. You ran it at the smallest and the largest step.</td></tr><tr><td>B4 Failover timed</td><td>Follow the module 04 recipe on a topic whose leader is on the broker you stop.</td><td>A time in seconds until the leader column names another broker. You ran it at the smallest and the largest step.</td></tr><tr><td>B5 Quorum and metadata recorded</td><td>Run the two <code>kafka-metadata-quorum.sh</code> commands and read the size of the metadata directory.</td><td>Leader, epoch and log end offset at each step. The log grows as you add partitions; your numbers show how fast.</td></tr><tr><td>B6 One written conclusion</td><td>Write one page.</td><td>It names the largest step that stayed healthy, the first number that moved, and the sentence "results will differ on real hardware".</td></tr></tbody></table></div>
+<h3>What to measure</h3><div class="table-wrap"><table><thead><tr><th>What</th><th>How</th><th>Source</th></tr></thead><tbody><tr><td>Time to create</td><td>Wrap the create loop with start and end times, for example <code>date +%s</code> before and after. Divide by the partitions created.</td><td>Loop is yours. <code>--create</code> as in module 03. <span class="tag-unverified">unverified</span> not run in the labs: timing a loop</td></tr><tr><td>Memory of each broker</td><td><code>docker stats --no-stream</code>, after each step has settled. Note the memory limit in Docker Desktop settings too.</td><td><span class="tag-unverified">unverified</span> not run in the labs: <code>docker stats</code></td></tr><tr><td>Restart time until under-replicated is 0</td><td>Stop kafka-3, start it, then poll the third health check every 2 seconds. Count the seconds.</td><td>Stop and start: module 04. Check: module 09, step 1. The polling loop is yours.</td></tr><tr><td>Leader failover time</td><td>Module 04, step 1: create a topic with <code>--replica-assignment 3:1:2</code>, run <code>d</code> on it, stop kafka-3, run <code>d</code> again until the leader changes.</td><td>Module 04.</td></tr><tr><td>Quorum status</td><td><code>kafka-metadata-quorum.sh ... describe --status</code> and <code>describe --replication</code>. Record leader, epoch, high watermark, log end offset.</td><td>Module 05.</td></tr><tr><td>Metadata log size</td><td>The directory <code>/tmp/kraft-combined-logs/__cluster_metadata-0</code> inside a broker. Read its size at each step.</td><td>Directory: module 05. <span class="tag-unverified">unverified</span> not run in the labs: reading the size with <code>du</code></td></tr><tr><td>JMX metrics</td><td>The five objects of module 12: under-replicated partitions, active controller count, offline partitions, request handler idle percent, raft metrics. Use the <code>J</code> helper.</td><td>Module 12. The lab started the monitoring profile first; do the same.</td></tr></tbody></table></div>
+<h3>The story it produces</h3><p>The story is about a limit, not a success. A good one reads: "I expected X to break first. Y moved first. I changed how I measured, and found Z." Put real numbers in it.</p>
+<details class="qa"><summary>Fill-in template for this story</summary><div class="answer"><div class="code"><pre><code>Situation:         I wanted to know what many partitions cost on a 3-broker lab.
+What I saw:        at ___ partitions: create ___ s, broker memory ___, restart ___ s,
+                   failover ___ s, metadata log ___ . (copy from the table)
+What I decided:    I stopped at ___ because ___ . I did not claim a real-world limit because ___ .
+What I got wrong:  I expected ___ to move first, but ___ did. Or: I measured too soon after the step.
+What I changed:    I waited ___ before measuring / changed the step size to ___ .</code></pre></div></div></details>
+</section>
+<section class="proj" id="proj-c" aria-labelledby="h-c" data-proj="c">
+<div class="proj-head"><div><div class="eyebrow">Project C</div><h2 id="h-c">Incident replay: three incidents, three reports</h2></div><div class="proj-meta"><span class="pill">Difficulty 2 of 3</span><span class="pill">2 weeks</span><span class="pill">12 to 20 hours (estimate)</span></div></div>
+<div class="bar"><progress max="8" value="0" data-prog="c" aria-label="Progress for project C"></progress><span class="readout" data-prog-text="c">0 of 8</span></div>
+<h3>Purpose</h3><p>Staff-level interviews ask how you handle a bad day. In this project you pick three incidents from the table, break the lab on purpose, observe, repair, and then write a post-incident report for each. The report is the point. Writing a timeline from your own log shows you what you missed.</p>
+<h3>Spec</h3><ul><li>Pick three incidents from the table. Pick at least one that touches replication or the controller, and one from the client side.</li><li>Use the matching drill on <a href="drills.html">drills.html</a> for the commands. Do not skip its questions.</li><li>For each incident: reproduce, observe, repair, then write the report. Use the template below.</li><li>As a reading step, open <a href="case-studies.html">case-studies.html</a> and compare each incident with a published case.</li><li>Run the three health checks before and after each incident.</li></ul>
+<h3>Choose from these lab-supported incidents</h3><div class="table-wrap"><table><thead><tr><th>Incident</th><th>Module</th><th>Drill</th><th>How the lab reproduces it</th></tr></thead><tbody><tr><td>Leader failure and epochs</td><td><a href="modules/04-replication.html">04</a></td><td><a href="drills.html#drill-3">3</a></td><td>Stop the leader broker, write under the new leader, read the leader-epoch file.</td></tr><tr><td>Unclean election and data loss</td><td><a href="modules/04-replication.html">04</a></td><td><a href="drills.html#drill-4">4</a></td><td>Topic with minimum in-sync 1, stop brokers in the module 04 order, force the unclean election, read the truncation warning.</td></tr><tr><td>Lost controller majority</td><td><a href="modules/05-kraft.html">05</a></td><td><a href="drills.html#drill-5">5</a></td><td>Stop two of three brokers. Metadata changes time out. Start them and read the quorum status.</td></tr><tr><td>Hanging transaction</td><td><a href="modules/06-transactions.html">06</a></td><td><a href="drills.html#drill-8">8</a></td><td>Kill a transactional producer with <code>pkill -9</code>. Compare <code>read_uncommitted</code> and <code>read_committed</code>.</td></tr><tr><td>Poison record and stuck partition</td><td><a href="modules/03-consumers.html">03</a></td><td><a href="drills.html#drill-7">7</a></td><td>Drill 7 stands in for a poison record with a stopped group and lag. <span class="tag-unverified">unverified</span> not run in the labs: a consumer that crashes on one bad record.</td></tr><tr><td>Connector task failure and dead-letter topic</td><td><a href="modules/08-ecosystem.html">08</a></td><td><a href="drills.html#drill-9">9</a></td><td>Send a line that is not JSON to a strict sink connector. Then add a dead-letter topic.</td></tr><tr><td>Noisy client and quotas</td><td><a href="modules/09-operations.html">09</a></td><td><a href="drills.html#drill-11">11</a></td><td>Quota on a client id, two performance runs. A short run misleads.</td></tr></tbody></table></div><h3>Post-incident report template</h3><div class="code"><pre><code>POST-INCIDENT REPORT: &lt;title&gt;
+Date and who ran it:
+Timeline     (clock times from your log; first sign, detection, action, recovery)
+Impact       (what a user or a downstream system would have seen; numbers)
+Cause        (the one mechanism, in plain words; point at the module section)
+Fix          (the exact commands you ran, and the output that proved it worked)
+Prevention   (a setting, an alert or a habit; name who would own it)
+What the monitoring showed  (which metric or alert moved, how fast, or "nothing")
+What I would still not know in production</code></pre></div><h3>Eight milestones</h3><div class="miles"><label class="rubric" for="c-m1"><input type="checkbox" data-ck data-proj="c" id="c-m1"><span>Pick three incidents and write a prediction for each (before you run anything)</span></label><label class="rubric" for="c-m2"><input type="checkbox" data-ck data-proj="c" id="c-m2"><span>Incident 1: reproduced and observed, with numbers in the log</span></label><label class="rubric" for="c-m3"><input type="checkbox" data-ck data-proj="c" id="c-m3"><span>Incident 1: repaired, health checks clean, report written</span></label><label class="rubric" for="c-m4"><input type="checkbox" data-ck data-proj="c" id="c-m4"><span>Incident 2: reproduced and observed, with numbers in the log</span></label><label class="rubric" for="c-m5"><input type="checkbox" data-ck data-proj="c" id="c-m5"><span>Incident 2: repaired, health checks clean, report written</span></label><label class="rubric" for="c-m6"><input type="checkbox" data-ck data-proj="c" id="c-m6"><span>Incident 3: reproduced and observed, with numbers in the log</span></label><label class="rubric" for="c-m7"><input type="checkbox" data-ck data-proj="c" id="c-m7"><span>Incident 3: repaired, health checks clean, report written</span></label><label class="rubric" for="c-m8"><input type="checkbox" data-ck data-proj="c" id="c-m8"><span>Read the published cases, write the comparison, and write the five-part story</span></label></div>
+<h3>Acceptance tests</h3><div class="table-wrap"><table><thead><tr><th>Test</th><th>What you do</th><th>What a pass looks like</th></tr></thead><tbody><tr><td>C1 Reproduced</td><td>For each of three incidents, run the break step.</td><td>The symptom named in the drill appears. If it does not, you wrote down what appeared instead.</td></tr><tr><td>C2 Observed with numbers</td><td>Before you repair, collect the output the drill tells you to read.</td><td>Copied output and at least one number in the log, for example a leader epoch, an offset or a message count.</td></tr><tr><td>C3 Repaired and verified</td><td>Run the repair step. Then run the three health checks.</td><td>All three print nothing, or you wrote down the one leftover and why. Drills say the topic <code>no-quorum</code> is a known leftover after drill 5.</td></tr><tr><td>C4 Monitoring recorded</td><td>Note what an alert or metric showed. The monitoring profile helps.</td><td>One line per incident: what moved, or "no alert would have fired".</td></tr><tr><td>C5 Report complete</td><td>Fill the template for each incident.</td><td>Seven headings filled, no heading says "n/a".</td></tr><tr><td>C6 Compared with published cases</td><td>Read the published cases and pick the closest one for each incident.</td><td>One paragraph per incident: what matched, what differed, what the case adds that the lab cannot.</td></tr></tbody></table></div>
+<h3>What to measure</h3><ul><li>Time from the break to the first sign you noticed, and to the first alert if one fired.</li><li>Time from the repair command to clean health checks.</li><li>The number the drill asks for: epoch, message count, lag, or throughput.</li><li>How many of your predictions were wrong. This is the most useful number.</li></ul>
+<h3>The story it produces</h3><p>You will have three stories. Choose the one where your prediction was most wrong. Speak it aloud in under two minutes.</p>
+<details class="qa"><summary>Fill-in template for this story</summary><div class="answer"><div class="code"><pre><code>Situation:         I replayed ___ (incident) on a 3-broker lab.
+What I saw:        timeline ___ ; first sign at ___ ; numbers ___ .
+What I decided:    I repaired by ___ and rejected ___ because ___ .
+What I got wrong:  I predicted ___ . The lab showed ___ .
+What I changed:    I would add ___ (alert, setting or runbook line) and check it by ___ .</code></pre></div></div></details>
+</section>
+<section class="proj" id="proj-d" aria-labelledby="h-d" data-proj="d">
+<div class="proj-head"><div><div class="eyebrow">Project D</div><h2 id="h-d">Lag monitor for Kafka 4.3</h2></div><div class="proj-meta"><span class="pill">Difficulty 3 of 3</span><span class="pill">2 weeks</span><span class="pill">15 to 25 hours (estimate)</span></div></div>
+<div class="bar"><progress max="8" value="0" data-prog="d" aria-label="Progress for project D"></progress><span class="readout" data-prog-text="d">0 of 8</span></div>
+<h3>Purpose</h3><p>Module 12 found that the lab exporter could not read consumer groups from Kafka 4.3, so the lab has no lag metric and no lag alert. Real teams meet this: a tool stops working after an upgrade. You will build a small replacement in a language you know. It reads lag from the command-line tool, turns it into metrics, and raises one useful alert.</p><p>This card gives the spec and the tests only. You write the tool.</p>
+<h3>Spec</h3><ul><li>Run <code>kafka-consumer-groups.sh --describe --all-groups</code> (module 03) every 30 seconds. Run it through <code>docker exec</code> on a broker, as the modules do.</li><li>Parse the columns GROUP, TOPIC, PARTITION, CURRENT-OFFSET, LOG-END-OFFSET and LAG for every group.</li><li>Compute lag in records for each partition. Check it against the LAG column.</li><li>Estimate lag in time: lag in records divided by the end-offset rate (records per second, measured over a window you choose). Decide what to publish when the rate is zero.</li><li>Publish the numbers where Prometheus can read them: a text file or a small HTTP endpoint. Name the metrics yourself and label them with group, topic and partition.</li><li>Write one alert rule: a partition's committed offset has not moved for a time you choose, while its end offset has moved.</li><li>Survive broker restarts. If one broker is down, try another, as module 05 does with kafka-2.</li><li>Say what happens when a partition has no committed offset yet. <span class="tag-unverified">unverified</span> not run in the labs: the output for a group with no commit on a partition. Run it and record what you see.</li></ul>
+<div class="note"><p><strong>What the labs do and do not show.</strong> Module 12 shows the Prometheus rules and metric queries on port 9095, and the rule file format in <code>monitoring/alerts.yml</code> (alert, expression, wait time, labels, annotations). The labs do not show a text-file or endpoint source added to Prometheus. <span class="tag-unverified">unverified</span> not run in the labs: adding a scrape target to <code>monitoring/prometheus.yml</code>, reloading Prometheus, and letting the Prometheus container reach a program on your laptop. Finding a working way, and writing it down, is part of the project. Note that the lab mounts both files read-only inside the container; you edit your copy on disk.</p></div><h3>Eight milestones</h3><div class="miles"><label class="rubric" for="d-m1"><input type="checkbox" data-ck data-proj="d" id="d-m1"><span>Spec and metric names written; sample output of the real command saved to a file</span></label><label class="rubric" for="d-m2"><input type="checkbox" data-ck data-proj="d" id="d-m2"><span>Parser passes test D1 on the saved output</span></label><label class="rubric" for="d-m3"><input type="checkbox" data-ck data-proj="d" id="d-m3"><span>Poll loop runs every 30 seconds and lag in records matches the LAG column</span></label><label class="rubric" for="d-m4"><input type="checkbox" data-ck data-proj="d" id="d-m4"><span>End-offset rate and lag in time computed; zero-rate case decided</span></label><label class="rubric" for="d-m5"><input type="checkbox" data-ck data-proj="d" id="d-m5"><span>Metrics published as a text file or HTTP endpoint and read once by hand</span></label><label class="rubric" for="d-m6"><input type="checkbox" data-ck data-proj="d" id="d-m6"><span>Prometheus reads the metrics, and the alert rule is loaded and visible</span></label><label class="rubric" for="d-m7"><input type="checkbox" data-ck data-proj="d" id="d-m7"><span>Tests D2 to D5 pass</span></label><label class="rubric" for="d-m8"><input type="checkbox" data-ck data-proj="d" id="d-m8"><span>24-hour false-alert count, test D6 and the five-part story written</span></label></div>
+<h3>Acceptance tests</h3><div class="table-wrap"><table><thead><tr><th>Test</th><th>What you do</th><th>What a pass looks like</th></tr></thead><tbody><tr><td>D1 Parse check</td><td>Run the module 03 command once. Save its real output to a file. Write a test that feeds the file to your parser.</td><td>Every partition row becomes one record with group, topic, partition, current offset, end offset and lag. Lines that are not rows (a header, a blank line, "has no active members") are skipped without an error.</td></tr><tr><td>D2 Stuck group fires the alert</td><td>Stop all consumers of a group. Keep writing to the topic with the performance tool.</td><td>The alert fires after the wait time you chose, and its text names the group, topic and partition. The lab stand-in for a stuck consumer is a stopped group, as in drill 7. A real stuck consumer needs code, and no lab has one.</td></tr><tr><td>D3 Healthy group stays quiet</td><td>Run a consumer with a group and a producer at a steady low rate for at least 10 minutes.</td><td>The alert never fires. The lag in records is small and steady. Report how many false alerts you saw.</td></tr><tr><td>D4 Idle topic stays quiet</td><td>Stop the producer. The group has caught up.</td><td>No alert: the committed offset has not moved, but the end offset has not moved either.</td></tr><tr><td>D5 Survives a cluster restart</td><td>Stop all three brokers, wait, start them. Keep the tool running the whole time.</td><td>The tool does not crash. It shows a clear "cannot read the cluster" state. It does not publish stale lag as if it were fresh. A separate alert says the tool is not reporting.</td></tr><tr><td>D6 Time estimate is honest</td><td>Compare your lag in time with a real measure: write a record, time how long until the group commits past it.</td><td>Your estimate and the measure are written side by side. You list when the estimate is wrong, for example when the write rate is zero.</td></tr></tbody></table></div>
+<h3>What to measure</h3><ul><li>Seconds your tool takes to run one poll, and whether it finishes inside the 30-second gap.</li><li>Time from the stop of a consumer to the alert firing. Include the wait time you chose.</li><li>False alerts in a 24-hour run with a healthy group. Write down the count, even if it is zero.</li><li>Lag in time estimate against the real measure in test D6.</li><li>Time for the tool to recover after the cluster restart in D5.</li></ul>
+<h3>The story it produces</h3><p>The strong story is about the gap between what a metric says and what is true: lag in records looked small while the group was stuck, or the estimate was wrong at a zero rate. Tell what you saw in the numbers.</p>
+<details class="qa"><summary>Fill-in template for this story</summary><div class="answer"><div class="code"><pre><code>Situation:         The lab exporter had no lag metric on Kafka 4.3, so ___ .
+What I saw:        my first version showed ___ ; the stuck group showed ___ ; idle showed ___ .
+What I decided:    I chose a wait time of ___ s because ___ ; I rejected ___ .
+What I got wrong:  ___ (a false alert, a stale number, a parse error)
+What I changed:    ___ , and the false alerts went from ___ to ___ .</code></pre></div></div></details>
+</section>
+<section class="proj" id="proj-e" aria-labelledby="h-e" data-proj="e">
+<div class="proj-head"><div><div class="eyebrow">Project E</div><h2 id="h-e">Multi-cluster failover rehearsal with MirrorMaker 2</h2></div><div class="proj-meta"><span class="pill">Difficulty 3 of 3</span><span class="pill">1 to 2 weeks</span><span class="pill">12 to 20 hours (estimate)</span></div></div>
+<div class="bar"><progress max="8" value="0" data-prog="e" aria-label="Progress for project E"></progress><span class="readout" data-prog-text="e">0 of 8</span></div>
+<h3>Purpose</h3><p>Module 10 says a copy is not the original. Offsets differ, transactions are not preserved the way you hope, and failback is harder than failover. In this project you rehearse a real failover with a runbook and a stopwatch, then count what it cost. You also reproduce one problem module 10 reports and test its proposed fix.</p>
+<h3>Spec</h3><ul><li>Copy topics from main to kafka-dr with MirrorMaker 2, using the module 10 part B steps. Start the second cluster with <code>docker compose up -d kafka-dr</code>.</li><li>Translate group offsets (module 10 shows this with <code>sync.group.offsets.enabled</code>).</li><li>Stop the main cluster. Start consumers on the standby from the translated offsets. Switch producers to the standby.</li><li>Measure copy delay and repeated records.</li><li>Reproduce the aborted-records problem from module 10, then test a <code>read_committed</code> copying consumer.</li><li>Module 10 marks this fix <span class="tag-unverified">unverified</span> <em>unverified</em>: it did not rerun the lab. Your job is to find the right property name, set it, and record what you find. Do not trust a name from memory. Do not trust the module. Write down where you found it and what happened.</li><li>Write the runbook before the rehearsal, and time the rehearsal against a target of 15 minutes. The target is a number to attempt. No module measured a failover time.</li></ul>
+<h3>Runbook template</h3><div class="code"><pre><code>FAILOVER RUNBOOK: main -&gt; kafka-dr
+Decision rule   (what exact condition makes us fail over? e.g. main unreachable for ___ minutes)
+Who decides     (a named role and a named backup; who tells the others)
+Stopwatch       start ___ : ___ ; target 15 minutes total; stop ___ : ___
+1. Stop the copy        (command; confirm the copy process has ended)
+2. Record last offsets  (source end offsets if readable; copy end offsets; translated group offsets)
+3. Switch producers     (new address; which topic name on the standby; who changes the settings)
+4. Start consumers      (group name; the offsets they start from; how you check them)
+5. Verify               (health checks on the standby; sample records; count of repeats)
+6. Rebuild the old site (what to start; what is stale; how to resync; who confirms)
+Known losses    (records not copied; repeated records; aborted records visible?)</code></pre></div><p>Failback (return to the main cluster) is harder than failover. Module 10 explains why. Write down what you would do, and mark each step you did not run. <span class="tag-unverified">unverified</span> not run in the labs: any failback.</p><h3>Eight milestones</h3><div class="miles"><label class="rubric" for="e-m1"><input type="checkbox" data-ck data-proj="e" id="e-m1"><span>Runbook written, with all seven headings filled, before anything is stopped</span></label><label class="rubric" for="e-m2"><input type="checkbox" data-ck data-proj="e" id="e-m2"><span>kafka-dr and MirrorMaker 2 running; copies of orders, payments and events exist (E1)</span></label><label class="rubric" for="e-m3"><input type="checkbox" data-ck data-proj="e" id="e-m3"><span>Copy delay measured five times (E2)</span></label><label class="rubric" for="e-m4"><input type="checkbox" data-ck data-proj="e" id="e-m4"><span>Translated group offsets seen on both clusters (E3)</span></label><label class="rubric" for="e-m5"><input type="checkbox" data-ck data-proj="e" id="e-m5"><span>Failover rehearsal done and timed (E4)</span></label><label class="rubric" for="e-m6"><input type="checkbox" data-ck data-proj="e" id="e-m6"><span>Repeated and uncopied records counted (E5)</span></label><label class="rubric" for="e-m7"><input type="checkbox" data-ck data-proj="e" id="e-m7"><span>Aborted-records problem reproduced (E6)</span></label><label class="rubric" for="e-m8"><input type="checkbox" data-ck data-proj="e" id="e-m8"><span>Fix tested, property and source written down, five-part story written (E7)</span></label></div>
+<h3>Acceptance tests</h3><div class="table-wrap"><table><thead><tr><th>Test</th><th>What you do</th><th>What a pass looks like</th></tr></thead><tbody><tr><td>E1 Copy exists</td><td>Module 10 part B, step 1 and 2: start kafka-dr and MirrorMaker 2, then compare end offsets of source and copy.</td><td>Topics named <code>main.orders</code>, <code>main.events</code> and <code>main.payments</code> exist on kafka-dr. Offsets are equal or close, and you explain any difference (module 10 explains transaction markers).</td></tr><tr><td>E2 Copy delay measured</td><td>Module 10 part B, step 3, repeated at least five times.</td><td>Five delays in seconds, with the smallest and largest. The module saw about 2 seconds once; yours may differ.</td></tr><tr><td>E3 Translated offsets seen</td><td>Module 10 part B, step 4: describe the same group on both clusters.</td><td>The group on kafka-dr shows current offsets lower than on main. You can explain why (the copy is not the original).</td></tr><tr><td>E4 Failover done and timed</td><td>Follow your runbook: stop main, switch, start consumers on the standby from translated offsets.</td><td>Consumers read from kafka-dr and make progress. The stopwatch time is written down against the 15-minute target. <span class="tag-unverified">unverified</span> not run in the labs: starting a consumer on kafka-dr with a group copied from main.</td></tr><tr><td>E5 Repeats and losses counted</td><td>Compare what the old consumer had processed on main with what the standby consumer read.</td><td>A number of repeated records and a number of records never copied. Both written, with how you counted.</td></tr><tr><td>E6 Aborted-records problem reproduced</td><td>Repeat the module 06 hanging-transaction lab on <code>payments</code>, copy it, read the copy.</td><td>The copy contains records that the aborted transaction wrote, because markers are not copied (module 10 evidence: 73 data records, 38 aborted).</td></tr><tr><td>E7 The fix tested</td><td>Change the copying consumer to read only committed records, rerun E6 on a new topic name.</td><td>Either the aborted records are gone from the copy, or you wrote down exactly what happened instead. Both count as a pass if recorded.</td></tr></tbody></table></div>
+<h3>What to measure</h3><ul><li>Copy delay in seconds, at least five samples, and the range.</li><li>Failover time on the stopwatch, step by step. Which step took longest?</li><li>Repeated records after the switch, and how you counted them.</li><li>Records not copied at the moment you stopped main.</li><li>The count of aborted records visible on the copy before the fix, and after it.</li><li>Time to rebuild the old site, and what you still could not tell.</li></ul>
+<h3>The story it produces</h3><p>The best story here is the gap between your runbook and your rehearsal: the step that took longer than planned, the number of repeats you did not predict, or the fix that behaved differently from the module. State what you found, not what you expected.</p>
+<details class="qa"><summary>Fill-in template for this story</summary><div class="answer"><div class="code"><pre><code>Situation:         The standby cluster had to take over, and the target was 15 minutes.
+What I saw:        copy delay ___ s; failover took ___ min ___ s; ___ repeated records; ___ uncopied.
+What I decided:    I moved consumers to translated offsets and accepted ___ repeats because ___ .
+What I got wrong:  ___ (a runbook step, a topic name, an offset I trusted)
+What I changed:    the runbook now says ___ ; the read_committed setting I found was ___ and it ___ .</code></pre></div></div></details>
+</section>
+
+<h2>Where to go next</h2>
+<ul>
+  <li><a href="drills.html">Failure drills</a>: the commands for project C.</li>
+  <li><a href="case-studies.html">Case studies</a>: published cases to compare against.</li>
+  <li><a href="capstone.html">Capstone</a>: the full plan for project A.</li>
+</ul>
+
+</div>
+</main>
+<script src="assets/kb.js"></script>
+<script>
+(function () {
+  var KEY = 'kb-projects';
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('input[data-ck]'));
+  var bar = document.getElementById('prog');
+  var txt = document.getElementById('prog-text');
+  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
+  function save(s) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
+  function show() {
+    var done = boxes.filter(function (b) { return b.checked; }).length;
+    bar.max = boxes.length; bar.value = done;
+    txt.textContent = done + ' of ' + boxes.length;
+    Array.prototype.forEach.call(document.querySelectorAll('progress[data-prog]'), function (p) {
+      var id = p.getAttribute('data-prog');
+      var mine = boxes.filter(function (b) { return b.getAttribute('data-proj') === id; });
+      var n = mine.filter(function (b) { return b.checked; }).length;
+      p.max = mine.length; p.value = n;
+      var t = document.querySelector('[data-prog-text="' + id + '"]');
+      if (t) t.textContent = n + ' of ' + mine.length;
+    });
+  }
+  var state = load();
+  boxes.forEach(function (b) {
+    b.checked = !!state[b.id];
+    b.addEventListener('change', function () {
+      var s = load(); if (b.checked) s[b.id] = 1; else delete s[b.id];
+      save(s); show();
+    });
+  });
+  document.getElementById('reset').addEventListener('click', function () {
+    boxes.forEach(function (b) { b.checked = false; });
+    save({}); show();
+  });
+  show();
+})();
+</script>
+</body>
+</html>

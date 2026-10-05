@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>07 Kafka Streams · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .cell.small { min-width: 38px; height: 38px; font-size: .8rem; }
+  .cell.safe { background: var(--read-soft); border-color: var(--read); }
+  .timeline { position: relative; height: 34px; border-bottom: 2px solid var(--line); margin: 1.2rem 0 .2rem; }
+  .timeline .ev { position: absolute; bottom: -7px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--write); border: 2px solid var(--surface); }
+  .timeline .tick { position: absolute; bottom: -22px; font: 500 .7rem var(--mono); color: var(--muted); transform: translateX(-50%); }
+  .win-rows { margin-top: 1.8rem; position: relative; }
+  .win-row { position: relative; height: 30px; margin: 4px 0; }
+  .win-bar { position: absolute; top: 0; height: 100%; border-radius: 6px; background: var(--read-soft); border: 1px solid var(--read); font: 600 .78rem var(--mono); display: grid; place-items: center; color: var(--ink); overflow: hidden; white-space: nowrap; }
+  .win-bar.empty { background: var(--surface-2); border-color: var(--line); color: var(--muted); font-weight: 500; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } }
+  .two h4 { margin: 0 0 .4rem; font: 600 .82rem var(--mono); color: var(--muted); }
+  .kv { font: 500 .88rem var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; min-height: 5.5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 07 Kafka Streams</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 07 · Day 5 · Kafka 4.3</div>
+  <h1>Kafka Streams</h1>
+  <p class="lede">Kafka Streams is a Java library for programs that read topics, compute, and write topics. It gives you grouping, counting, windows and joins, and it keeps the state those need safe in Kafka itself.</p>
+
+  <div class="lab-panel" id="wc-demo" style="margin:0">
+    <h3>Try it: count words as they arrive</h3>
+    <p class="hint">This is the program you run in the lab. Each sentence is one input record. The table holds the current count for each word, and every change to the table is sent to the output topic.</p>
+    <div class="controls">
+      <label for="wc-in">Sentence</label>
+      <input id="wc-in" type="text" value="the quick brown fox" size="22" autocomplete="off">
+      <button class="btn primary" type="button" id="wc-send">Send</button>
+      <button class="btn" type="button" data-line="the lazy dog">the lazy dog</button>
+      <button class="btn" type="button" data-line="the fox">the fox</button>
+      <button class="btn" type="button" id="wc-reset">Start again</button>
+    </div>
+    <div class="two">
+      <div><h4>table: current count for each word</h4><div class="kv" id="wc-table"></div></div>
+      <div><h4>output topic: every change, in order</h4><div class="kv" id="wc-out"></div></div>
+    </div>
+    <p class="figcap">The table has one row for each word. The output topic has one record for each change. They are two views of the same data.</p>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>With only a consumer and a producer, simple processing is easy: read a record, change it, write it. Harder tasks need <strong>state</strong>. To count orders for each customer you must remember the counts. To join an order with its customer you must remember the customers. That state must survive a crash, must move when partitions move to another instance, and must stay consistent with the offsets you commit.</p>
+  <p><strong>Kafka Streams</strong> solves this as a library. You add it to a normal Java application. There is no separate processing cluster. You describe the processing as a chain of steps, and the library runs it, keeps the state in a local store on disk, and writes every state change to a Kafka topic so that the state can be rebuilt anywhere.</p>
+  <p>To scale, you start more copies of the same application. They form a consumer group (module 03) and share the input partitions. To get exactly-once, you set one option and the library uses transactions (module 06).</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> Kafka Streams turns topics into streams and tables, runs your steps once for each input partition, and backs every local state store with a compacted topic.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+
+    <h3>Streams and tables</h3>
+    <p>The same topic can be read in two ways.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th></th><th>Stream (<code>KStream</code>)</th><th>Table (<code>KTable</code>)</th></tr></thead>
+        <tbody>
+          <tr><td>Each record is</td><td>An event: something happened.</td><td>An update: the value for this key is now this.</td></tr>
+          <tr><td>Two records with the same key</td><td>Two separate facts.</td><td>The second replaces the first.</td></tr>
+          <tr><td>A null value</td><td>An event with no content.</td><td>A delete of that key.</td></tr>
+          <tr><td>Example</td><td>Each payment made.</td><td>The current balance of each account.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>They convert into each other. If you replay a stream of updates and keep the latest for each key, you get a table. If you write down every change to a table, you get a stream. The demo at the top shows both at once. A compacted topic (module 01) is a table stored in Kafka.</p>
+
+    <h3>The program is a graph</h3>
+    <p>You describe steps: read a topic, split, filter, group, count, write a topic. Kafka Streams calls this the <strong>topology</strong>. The word-count program is short enough to read whole:</p>
+  </div>
+
+  <figure class="figure wide reveal">
+<pre><code>StreamsBuilder builder = new StreamsBuilder();
+
+KStream&lt;String, String&gt; lines = builder.stream("streams-plaintext-input");
+
+KTable&lt;String, Long&gt; counts = lines
+    .flatMapValues(line -&gt; Arrays.asList(line.toLowerCase().split(" ")))  // one record for each word
+    .groupBy((key, word) -&gt; word)                                         // the word becomes the key
+    .count();                                                             // a table: word → count
+
+counts.toStream().to("streams-wordcount-output", Produced.with(Serdes.String(), Serdes.Long()));</code></pre>
+    <figcaption>This is the topology of the example that ships with Kafka, shortened. I did not compile this copy; the lab runs the original from the Kafka image.</figcaption>
+  </figure>
+
+  <div class="col">
+    <p>Two things happen that the code does not show.</p>
+    <ul>
+      <li><strong>A repartition topic.</strong> <code>groupBy</code> changes the key from "nothing" to "the word". Counting needs all records for one word in one partition. So the library writes the records to an internal topic keyed by word and reads them back. The program is now two parts with a topic between them.</li>
+      <li><strong>A changelog topic.</strong> <code>count</code> needs a store. Every time a count changes, the library also writes the new value to an internal compacted topic.</li>
+    </ul>
+
+    <h3>Time and windows</h3>
+    <p>"Count for each word" grows for ever. Often you want "count in each minute". A <strong>window</strong> cuts the stream into pieces by time. The time is the record's own timestamp, the <strong>event time</strong>, not the clock of the machine that processes it. So a record that arrives late still goes into the window where it belongs.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="win-demo">
+    <h3>Try it: three kinds of window on the same six events</h3>
+    <p class="hint">The dots are events at seconds 1, 4, 6, 14, 16 and 31. Each bar is one window with the number of events in it.</p>
+    <div class="controls">
+      <span id="wn-lbl">Window</span>
+      <div class="seg" role="group" aria-labelledby="wn-lbl">
+        <button type="button" data-win="tumbling" aria-pressed="true">Tumbling, 10 s</button>
+        <button type="button" data-win="hopping" aria-pressed="false">Hopping, 10 s every 5 s</button>
+        <button type="button" data-win="session" aria-pressed="false">Session, gap 5 s</button>
+      </div>
+    </div>
+    <div class="timeline" id="wn-line"></div>
+    <div class="win-rows" id="wn-rows"></div>
+    <div class="readout" id="wn-out" aria-live="polite"></div>
+  </div>
+
+  <div class="col">
+    <h3>Joins</h3>
+    <p>A join combines records from two sources that have the same key. The most common one enriches a stream with a table: each order gets the current data of its customer. The table side is a lookup. The stream side drives the output. So the order of arrival matters:</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="join-demo">
+    <h3>Try it: join orders with customers</h3>
+    <p class="hint">An inner join of a stream of orders with a table of customers. Press the buttons in different orders.</p>
+    <div class="controls">
+      <button class="btn" type="button" data-j="c1">Customer c1 = Ana</button>
+      <button class="btn" type="button" data-j="c2">Customer c2 = Ben</button>
+      <button class="btn primary" type="button" data-j="o1">Order for c1</button>
+      <button class="btn primary" type="button" data-j="o2">Order for c2</button>
+      <button class="btn" type="button" id="jn-reset">Start again</button>
+    </div>
+    <div class="two">
+      <div><h4>customers table</h4><div class="kv" id="jn-table"></div></div>
+      <div><h4>joined output</h4><div class="kv" id="jn-out"></div></div>
+    </div>
+    <div class="readout" id="jn-msg" aria-live="polite">The table is empty.</div>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>Tasks: the unit of work</h3>
+    <p>The library splits the topology into <strong>sub-topologies</strong> at each repartition topic. For each sub-topology it creates one <strong>task</strong> for each input partition. A task has an id of two numbers: sub-topology and partition. In the lab, three input partitions and two sub-topologies gave six tasks, and six state directories named <code>0_0</code> to <code>1_2</code>.</p>
+    <p>A task owns its partition and its piece of the state. Tasks are assigned to <strong>stream threads</strong> across all running instances by the consumer group. So the partition count of the input topic is the upper limit of parallel work, as for any consumer group.</p>
+
+    <h3>State stores and changelogs</h3>
+    <ol class="steps">
+      <li class="on">A step that needs memory, such as <code>count</code>, gets a <strong>state store</strong>. By default this is RocksDB, a key-value store that keeps its data in files on local disk.</li>
+      <li class="on">Each write to the store is also sent to the store's <strong>changelog topic</strong>, a compacted topic with the same number of partitions as the task's input.</li>
+      <li class="on">On a commit, the library flushes the store, waits for the changelog writes, and commits the input offsets. With exactly-once these are one transaction.</li>
+      <li class="on">When a task moves to an instance that does not have its store, the instance reads the changelog partition from the start and rebuilds the store. This is <strong>restoration</strong>. The task does not process until it is finished.</li>
+    </ol>
+    <p>In the lab I deleted the local state directory and restarted the program. The next sentence gave "the 6", continuing from 5: the counts came back from the changelog.</p>
+    <p>Restoration of a large store can take minutes. A <strong>standby replica</strong> is a second instance that keeps reading the changelog to hold a warm copy, so that a failover is fast. Keeping local disks across restarts has the same effect for planned restarts.</p>
+
+    <h3>Why output can show fewer updates than you expect</h3>
+    <p>A cache sits in front of each store. Several updates to the same key within one commit interval are merged, and only the last is sent on. The example program sets the cache to zero so that you see every change. With the default 10 MiB cache and 30-second commit interval you would see fewer, later records. The final values are the same.</p>
+
+    <h3>Late records and the grace period</h3>
+    <p>Records can arrive out of order. A window stays open for late records for its <strong>grace period</strong> after its end. A record that arrives later than that is dropped and counted in a metric. A longer grace period accepts more late data and makes final results later.</p>
+
+    <h3>Co-partitioning</h3>
+    <p>For a join, the task for partition 3 of one topic must also have partition 3 of the other, and the same key must be in the same partition on both sides. So both topics need the same number of partitions and the same partitioning by key. The library checks the counts at start and stops if they differ. A <code>GlobalKTable</code> avoids the rule: every instance loads the whole table. Use it for small reference data.</p>
+
+    <h3>Exactly-once</h3>
+    <p>With <code>processing.guarantee=exactly_once_v2</code>, each commit is a transaction that covers the output records, the changelog records and the input offsets. The commit interval then defaults to 100 milliseconds. <span class="tag-unverified">unverified: the 100 ms value is from memory</span></p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>Defaults are from the Kafka 4.3 Kafka Streams configuration reference. A Streams application also accepts every producer and consumer setting from modules 02 and 03.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Streams config</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>application.id</code></td><td>none (required)</td><td>The name of the application. It is the consumer group id and the prefix of every internal topic and state directory.</td><td>Choose once. A new id means a new application that starts from nothing.</td></tr>
+        <tr><td><code>bootstrap.servers</code></td><td>none (required)</td><td>Broker addresses.</td><td>—</td></tr>
+        <tr><td><code>processing.guarantee</code></td><td><code>at_least_once</code></td><td><code>exactly_once_v2</code> turns on transactions.</td><td>When duplicates in output or state are not acceptable.</td></tr>
+        <tr><td><code>num.stream.threads</code></td><td>1</td><td>Processing threads in this instance.</td><td>Raise to use more processor cores, up to the number of tasks.</td></tr>
+        <tr><td><code>num.standby.replicas</code></td><td>0</td><td>Warm copies of each state store on other instances.</td><td>Set 1 for stateful applications that must fail over in seconds.</td></tr>
+        <tr><td><code>state.dir</code></td><td>the Java temporary directory</td><td>Where local state is kept.</td><td>Always set it to a durable disk. The temporary directory can be cleared by the operating system; the library warns about this at start.</td></tr>
+        <tr><td><code>replication.factor</code></td><td>−1 (use the broker default)</td><td>Copies of the internal topics.</td><td>Make sure the result is 3 in production.</td></tr>
+        <tr><td><code>commit.interval.ms</code></td><td>30000 (30 seconds)</td><td>How often state is flushed and offsets are committed.</td><td>Lower for fresher output and less repeated work after a crash; higher for throughput.</td></tr>
+        <tr><td><code>statestore.cache.max.bytes</code></td><td>10485760 (10 MiB)</td><td>Cache that merges updates to the same key before they are sent on.</td><td>Set 0 to see every update. Raise to reduce downstream load.</td></tr>
+        <tr><td><code>max.task.idle.ms</code></td><td>0</td><td>How long a task with several inputs waits for data on all of them before it processes what it has.</td><td>Raise it for joins, so that records are processed in time order across both inputs.</td></tr>
+        <tr><td><code>default.key.serde</code>, <code>default.value.serde</code></td><td>null</td><td>How keys and values become bytes when a step does not say.</td><td>Set them, or state the serde at each step.</td></tr>
+        <tr><td><code>default.timestamp.extractor</code></td><td><code>FailOnInvalidTimestamp</code></td><td>Where event time comes from. The default uses the record's timestamp and stops on an invalid one.</td><td>Write your own to use a time inside the value.</td></tr>
+        <tr><td><code>deserialization.exception.handler</code></td><td><code>LogAndFailExceptionHandler</code></td><td>What to do with a record that cannot be read.</td><td>Use a handler that logs and continues, or sends the record to a dead-letter topic, so that one bad record does not stop the application.</td></tr>
+        <tr><td><code>processing.exception.handler</code></td><td><code>LogAndFailProcessingExceptionHandler</code></td><td>What to do when your code throws.</td><td>As above, for errors you can skip.</td></tr>
+        <tr><td><code>production.exception.handler</code></td><td><code>DefaultProductionExceptionHandler</code></td><td>What to do when a write to Kafka fails.</td><td>Rarely.</td></tr>
+        <tr><td><code>topology.optimization</code></td><td><code>none</code></td><td><code>all</code> lets the library merge repartition topics and reuse source topics as changelogs.</td><td>Turn on for new applications. Turning it on later changes internal topics.</td></tr>
+        <tr><td><code>application.server</code></td><td>empty</td><td>This instance's host and port, shared with other instances so that a query can be sent to the instance that holds a key.</td><td>Set it when you query state stores from outside.</td></tr>
+        <tr><td><code>acceptable.recovery.lag</code></td><td>10000</td><td>An instance whose copy of a store is at most this many records behind counts as caught up for task assignment.</td><td>Rarely.</td></tr>
+        <tr><td><code>max.warmup.replicas</code></td><td>2</td><td>How many extra copies may be warmed at once before tasks move to a new instance.</td><td>Raise to scale out faster at more load.</td></tr>
+        <tr><td><code>probing.rebalance.interval.ms</code></td><td>600000 (10 minutes)</td><td>How often to check if warmed copies are ready so that tasks can move.</td><td>Rarely.</td></tr>
+        <tr><td><code>state.cleanup.delay.ms</code></td><td>600000 (10 minutes)</td><td>Wait before deleting local state of a task that moved away.</td><td>Rarely.</td></tr>
+        <tr><td><code>task.timeout.ms</code></td><td>300000 (5 minutes)</td><td>How long a task may fail on timeouts before the application gives up.</td><td>Raise to ride through longer broker problems.</td></tr>
+        <tr><td><code>windowstore.changelog.additional.retention.ms</code></td><td>86400000 (1 day)</td><td>Extra retention on window changelog topics beyond the window's own retention.</td><td>Rarely.</td></tr>
+        <tr><td><code>group.protocol</code></td><td><code>classic</code></td><td><code>streams</code> uses a newer protocol where the broker assigns tasks.</td><td>The lab broker lists <code>streams</code> as accepted. Check its status for your version before use. <span class="tag-unverified">unverified</span></td></tr>
+        <tr><td><code>rack.aware.assignment.strategy</code></td><td><code>none</code></td><td>Prefers tasks on instances in the same rack as the partition leaders.</td><td>Multi-zone deployments.</td></tr>
+        <tr><td><code>poll.ms</code>, <code>buffered.records.per.partition</code></td><td>100, 1000</td><td>How long to wait for input, and how many records to hold for each partition.</td><td>Rarely.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>The state store cannot load its native library</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The application starts, creates its internal topics, then shuts down. No output.</dd>
+      <dt>You observe</dt><dd>In the lab, with the official <code>apache/kafka</code> image: "UnsatisfiedLinkError: … librocksdbjni….so: Error loading shared library libstdc++.so.6: No such file or directory".</dd>
+      <dt>Cause</dt><dd>RocksDB is native code and needs the C++ standard library. The small Alpine Linux base image does not include it.</dd>
+      <dt>Fix</dt><dd>Install the library in the image (<code>apk add libstdc++</code> on Alpine), or use a base image that has it.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A restart takes many minutes</h3>
+    <dl>
+      <dt>What breaks</dt><dd>After a deployment or a crash, tasks do not process while their stores are rebuilt from the changelog.</dd>
+      <dt>You observe</dt><dd>Lag grows on the input. Log lines about restoration. The application reports the state "rebalancing" for a long time.</dd>
+      <dt>Fix</dt><dd>Keep <code>state.dir</code> on a disk that survives restarts, so that only the missing tail is replayed. Add a standby replica. Keep stores small: use windows with retention instead of unbounded tables where you can.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>One bad record stops the application</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A record cannot be deserialized. With the default handler the thread stops, the task moves to another instance, which reads the same record and stops too.</dd>
+      <dt>Fix</dt><dd>Set a deserialization handler that logs and continues or forwards the record to a dead-letter topic. Decide which is right for your data: skipping silently is also a kind of data loss.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Topics for a join are not co-partitioned</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The application refuses to start with a topology error about different partition counts. Worse, if the counts match but the producers used different partitioners, it starts and silently misses matches.</dd>
+      <dt>Fix</dt><dd>Give both topics the same partition count and write both with the default partitioner on the same key. Or repartition one side inside the topology. Or use a <code>GlobalKTable</code> for the lookup side.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The join misses records at start-up</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Orders are joined against a customers table that is not loaded yet, and are dropped or sent on without customer data.</dd>
+      <dt>Cause</dt><dd>With <code>max.task.idle.ms=0</code> a task processes whichever input has data. The stream may run ahead of the table.</dd>
+      <dt>Fix</dt><dd>Raise <code>max.task.idle.ms</code> so that the task waits and takes records in timestamp order. Make sure table records carry timestamps earlier than the events that need them.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A code change loses the state</h3>
+    <dl>
+      <dt>What breaks</dt><dd>After a release, counts start again from zero.</dd>
+      <dt>Cause</dt><dd>Internal topic names contain generated numbers, such as <code>KSTREAM-AGGREGATE-STATE-STORE-0000000003</code>. Adding a step before it changes the number, so the new version looks for a different, empty changelog.</dd>
+      <dt>Fix</dt><dd>Give every stateful step and repartition an explicit name in the code. Then the topic names stay the same when the topology changes around them.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Late records are dropped</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Window results are lower than the true numbers.</dd>
+      <dt>Cause</dt><dd>Records arrive after the window's grace period, for example from a device that was offline.</dd>
+      <dt>Fix</dt><dd>Watch the dropped-records metric. Lengthen the grace period to match how late your data really is, and accept later final results.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against the lab cluster. It uses the word-count example that ships inside the Kafka image, so you do not need to write or build Java code.</p>
+  </div>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092</code></pre></div>
+
+  <h3>Step 1. Prepare</h3>
+  <p>Create the two topics. Install the library that RocksDB needs; without it the example stops with the error shown in the failure section. Write a small configuration file so that the example finds the brokers.</p>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic streams-plaintext-input --partitions 3 --replication-factor 3
+k kafka-topics.sh --bootstrap-server $B --create --topic streams-wordcount-output --partitions 3 \
+  --replication-factor 3 --config cleanup.policy=compact
+
+docker exec -u root kafka-1 apk add --no-cache libstdc++
+docker exec kafka-1 sh -c 'printf "bootstrap.servers=kafka-1:19092\n" > /tmp/streams.properties'</code></pre></div>
+
+  <h3>Step 2. Start the application and send sentences</h3>
+  <div class="code"><pre><code>docker exec -d kafka-1 sh -c '/opt/kafka/bin/kafka-run-class.sh \
+  org.apache.kafka.streams.examples.wordcount.WordCountDemo /tmp/streams.properties > /tmp/wordcount.log 2>&1'
+# wait 14 seconds
+printf 'the quick brown fox\nthe lazy dog\nthe fox\nthe lazy dog\nthe fox\n' | \
+  k kafka-console-producer.sh --bootstrap-server $B --topic streams-plaintext-input</code></pre></div>
+
+  <h3>Step 3. Read the output</h3>
+  <p>The counts are stored as 8-byte numbers, so tell the consumer how to read the value.</p>
+  <div class="code"><pre><code>k kafka-console-consumer.sh --bootstrap-server $B --topic streams-wordcount-output --from-beginning \
+  --formatter-property print.key=true \
+  --formatter-property value.deserializer=org.apache.kafka.common.serialization.LongDeserializer</code></pre></div>
+  <pre class="out">the     1
+the     2
+dog     1
+the     3
+the     4
+dog     2
+the     5
+quick   1
+brown   1
+fox     1
+lazy    1
+fox     2
+lazy    2
+fox     3</pre>
+  <p>Every change to the table is one record: "the" appears five times with counts 1 to 5. The words are not in input order across the whole output, because each word went to one of three partitions and the consumer reads the partitions one after another. Within one word the order is always right.</p>
+
+  <h3>Step 4. Find what the library created</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --list | grep streams
+k kafka-topics.sh --bootstrap-server $B --describe --topic \
+  streams-wordcount-KSTREAM-AGGREGATE-STATE-STORE-0000000003-changelog | head -1
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group streams-wordcount
+docker exec kafka-1 sh -c 'ls /tmp/kafka-streams/streams-wordcount/'</code></pre></div>
+  <pre class="out">streams-plaintext-input
+streams-wordcount-KSTREAM-AGGREGATE-STATE-STORE-0000000003-changelog
+streams-wordcount-KSTREAM-AGGREGATE-STATE-STORE-0000000003-repartition
+streams-wordcount-output
+
+changelog:    PartitionCount: 3  Configs: min.insync.replicas=2,cleanup.policy=compact,…
+repartition:  Configs: cleanup.policy=delete,segment.bytes=52428800,retention.ms=-1,…
+
+TOPIC                                    PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+streams-plaintext-input                  2          5               5               0
+streams-wordcount-…-repartition          1          7               7               0
+streams-wordcount-…-repartition          2          7               7               0
+
+0_0  0_1  0_2  1_0  1_1  1_2  kafka-streams-process-metadata</pre>
+  <p>Read this carefully; it contains the whole design.</p>
+  <ul>
+    <li>Two internal topics, both prefixed with the application id. The changelog is compacted. The repartition topic has unlimited retention; the library deletes records from it itself after they are processed.</li>
+    <li>The application is a consumer group named after its id. It consumes the input topic and its own repartition topic.</li>
+    <li>Five sentences went to input partition 2. They became 14 words, spread by key over the repartition partitions: 7 and 7.</li>
+    <li>Six task directories: sub-topology 0 (split into words) and sub-topology 1 (count), each for three partitions.</li>
+  </ul>
+
+  <h3>Step 5. Destroy the local state and watch it come back</h3>
+  <div class="code"><pre><code>docker exec kafka-1 sh -c "pkill -f WordCountDemo; sleep 3; rm -rf /tmp/kafka-streams"
+docker exec -d kafka-1 sh -c '/opt/kafka/bin/kafka-run-class.sh \
+  org.apache.kafka.streams.examples.wordcount.WordCountDemo /tmp/streams.properties > /tmp/wordcount2.log 2>&1'
+# wait 14 seconds
+echo 'the end' | k kafka-console-producer.sh --bootstrap-server $B --topic streams-plaintext-input
+# wait 10 seconds, then read the output topic again and look at the last lines</code></pre></div>
+  <pre class="out">fox     3
+the     6
+end     1</pre>
+  <p>The local store was deleted, yet "the" went from 5 to 6. The application rebuilt the store from the changelog topic before it processed the new sentence.</p>
+
+  <h3>Step 6. Stop and reset</h3>
+  <div class="code"><pre><code>docker exec kafka-1 sh -c "pkill -f WordCountDemo"
+# wait about 45 seconds for the group to become empty
+k kafka-streams-application-reset.sh --bootstrap-server $B --application-id streams-wordcount \
+  --input-topics streams-plaintext-input --dry-run</code></pre></div>
+  <p>The reset tool moves the input offsets back to the start and deletes the internal topics, so that the application can process everything again. Run it with <code>--dry-run</code> first. It refuses to run while the group has members: when I ran it straight after the kill, it failed with "Consumer group 'streams-wordcount' is still active". The reset run after the wait was not done in my session.</p>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Kafka Streams runs on the brokers.</td><td>It is a library inside your own application. The brokers only store topics.</td></tr>
+        <tr><td>State is kept in memory and lost on a crash.</td><td>It is on local disk and every change is in a changelog topic.</td></tr>
+        <tr><td>Local state is the source of truth.</td><td>The changelog topic is. The local store is a cache that can be rebuilt.</td></tr>
+        <tr><td>A table gives one output record for each key.</td><td>It gives one for each change, minus those merged by the cache.</td></tr>
+        <tr><td>Windows use the time the record is processed.</td><td>They use the record's timestamp by default.</td></tr>
+        <tr><td>More instances always means faster.</td><td>Only up to the number of tasks, which comes from the input partition count.</td></tr>
+        <tr><td>Changing the application id is harmless.</td><td>It creates a new consumer group and new, empty internal topics. All state starts again.</td></tr>
+        <tr><td>Any two topics with the same keys can be joined.</td><td>They must also have the same partition count and the same partitioner.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>When do you choose Kafka Streams, and when something else?</summary><div class="answer">
+    <p>Choose it when the input and output are Kafka topics, the team writes Java or another language on the Java runtime, and you want to deploy the processing like any other service.</p>
+    <p>Look elsewhere when you need another language, when sources and sinks are mostly not Kafka, when one job must scale beyond what a partition count allows, or when analysts need to write the logic in SQL. Apache Flink covers those cases, at the price of a separate cluster to run.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you size and deploy a stateful Streams application?</summary><div class="answer">
+    <p>Estimate the store: number of keys times value size, plus overhead. That is the local disk for each instance's share and also the size of the changelog. Restoration time is roughly the changelog size divided by the read rate; if that is longer than you can accept, add a standby replica and keep disks across restarts.</p>
+    <p>Deploy with stable identities and durable volumes. Set <code>state.dir</code> on that volume. Restart one instance at a time and wait for the application to return to the running state.</p>
+  </div></details>
+
+  <details class="qa"><summary>What does exactly-once cost in Streams?</summary><div class="answer">
+    <p>Commits happen far more often, so more transactions and markers. Output becomes visible to committed readers only at each commit. After an unclean stop, the local store may not match the last committed transaction, so it is wiped and restored from the changelog, which makes crash recovery slower.</p>
+    <p>It is worth it when the output is totals or state that later steps trust. For a pipeline whose sink already ignores repeats, at-least-once is simpler.</p>
+  </div></details>
+
+  <details class="qa"><summary>A join must use a 50-million-row reference table. KTable or GlobalKTable?</summary><div class="answer">
+    <p>A <code>GlobalKTable</code> loads all 50 million rows into every instance: simple, no co-partitioning, but each instance needs the disk and a long first load. A <code>KTable</code> gives each instance only its partitions, and needs both topics co-partitioned on the join key.</p>
+    <p>For a table this large, use a <code>KTable</code> and repartition the stream to the table's key if needed. Keep <code>GlobalKTable</code> for small data such as country codes, or when the stream must be joined on a field that is not its key and repartitioning is too costly.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you change a running topology safely?</summary><div class="answer">
+    <p>Name every stateful operator and repartition step from the first release. Then most changes keep the same internal topics.</p>
+    <p>For a change that alters what the state means, such as a different aggregation, the old state is wrong for the new code. Deploy it as a new application id that reads from the start, let it catch up beside the old one, then switch consumers of the output and retire the old one.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do other services read the state?</summary><div class="answer">
+    <p>Two ways. Write the table to an output topic and let each service keep its own copy: simple and decoupled. Or query the stores directly inside the application, with <code>application.server</code> set so that a request can be forwarded to the instance that owns the key.</p>
+    <p>Direct queries save a copy of the data, but your service must handle the moments when a store is moving or restoring.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. Where does a Kafka Streams application run?</summary><div class="answer"><p>In your own Java process. There is no separate processing cluster.</p></div></details>
+  <details class="qa"><summary>2. What is the difference between a stream and a table?</summary><div class="answer"><p>In a stream each record is a separate event. In a table each record replaces the earlier value for its key.</p></div></details>
+  <details class="qa"><summary>3. What does <code>application.id</code> control?</summary><div class="answer"><p>The consumer group id, the prefix of internal topics, and the name of the state directory.</p></div></details>
+  <details class="qa"><summary>4. Why does <code>groupBy</code> on a new key create a repartition topic?</summary><div class="answer"><p>All records with the same new key must reach the same task. Writing them to a topic keyed by the new key does that.</p></div></details>
+  <details class="qa"><summary>5. What is a changelog topic?</summary><div class="answer"><p>A compacted internal topic that receives every change to one state store, so that the store can be rebuilt.</p></div></details>
+  <details class="qa"><summary>6. What is a task, and how many does an application have?</summary><div class="answer"><p>One unit of processing for one sub-topology and one input partition. The total is the sum, over sub-topologies, of their input partition counts.</p></div></details>
+  <details class="qa"><summary>7. What does a standby replica do?</summary><div class="answer"><p>It keeps a warm copy of a state store on another instance by reading the changelog, so that failover does not wait for a full restoration.</p></div></details>
+  <details class="qa"><summary>8. Name the three kinds of window in the demo.</summary><div class="answer"><p>Tumbling: fixed, no overlap. Hopping: fixed, overlapping. Session: ends after a gap with no events.</p></div></details>
+  <details class="qa"><summary>9. What must be true of two topics before a stream-table join?</summary><div class="answer"><p>The same number of partitions and the same partitioning by key.</p></div></details>
+  <details class="qa"><summary>10. Which setting turns on exactly-once?</summary><div class="answer"><p><code>processing.guarantee=exactly_once_v2</code>.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="06-transactions.html">← 06 Transactions</a>
+    <a class="btn primary" href="08-ecosystem.html">08 Ecosystem →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- word count demo ----------
+(function () {
+  const input = document.getElementById('wc-in'), table = document.getElementById('wc-table'), out = document.getElementById('wc-out');
+  let counts, log;
+  function draw() {
+    const keys = Object.keys(counts);
+    table.textContent = keys.length ? keys.map((k) => k.padEnd(8) + counts[k]).join('\n') : '(empty)';
+    out.textContent = log.length ? log.slice(-14).join('\n') : '(nothing yet)';
+  }
+  function send(line) {
+    line.toLowerCase().split(/\s+/).filter(Boolean).forEach((w) => { counts[w] = (counts[w] || 0) + 1; log.push(w.padEnd(8) + counts[w]); });
+    draw();
+  }
+  function reset() { counts = {}; log = []; draw(); }
+  document.getElementById('wc-send').addEventListener('click', () => send(input.value));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(input.value); });
+  document.querySelectorAll('#wc-demo [data-line]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.line; send(b.dataset.line); }));
+  document.getElementById('wc-reset').addEventListener('click', reset);
+  reset();
+})();
+
+// ---------- windows demo ----------
+(function () {
+  const EVENTS = [1, 4, 6, 14, 16, 31], SPAN = 40;
+  const line = document.getElementById('wn-line'), rows = document.getElementById('wn-rows'), out = document.getElementById('wn-out');
+  const btns = [...document.querySelectorAll('[data-win]')];
+  const pct = (s) => (s / SPAN) * 100 + '%';
+
+  EVENTS.forEach((t) => { const e = document.createElement('div'); e.className = 'ev'; e.style.left = pct(t); e.title = 'second ' + t; line.appendChild(e); });
+  [0, 10, 20, 30, 40].forEach((t) => { const k = document.createElement('div'); k.className = 'tick'; k.style.left = pct(t); k.textContent = t + ' s'; line.appendChild(k); });
+
+  function windows(kind) {
+    if (kind === 'tumbling') return [0, 10, 20, 30].map((s) => [s, s + 10]);
+    if (kind === 'hopping') return [0, 5, 10, 15, 20, 25, 30].map((s) => [s, s + 10]);
+    const sessions = []; let start = EVENTS[0], last = EVENTS[0];
+    EVENTS.slice(1).forEach((t) => { if (t - last > 5) { sessions.push([start, last]); start = t; } last = t; });
+    sessions.push([start, last]);
+    return sessions;
+  }
+  function draw(kind) {
+    rows.innerHTML = '';
+    const ws = windows(kind);
+    ws.forEach(([a, b]) => {
+      const n = EVENTS.filter((t) => (kind === 'session' ? t >= a && t <= b : t >= a && t < b)).length;
+      const row = document.createElement('div'); row.className = 'win-row';
+      const bar = document.createElement('div'); bar.className = 'win-bar' + (n ? '' : ' empty');
+      bar.style.left = pct(Math.min(a, SPAN)); bar.style.width = 'calc(' + pct(Math.max(Math.min(b, SPAN) - a, 1.2)) + ')';
+      bar.textContent = n; bar.title = a + ' to ' + b + ' s: ' + n + ' events';
+      row.appendChild(bar); rows.appendChild(row);
+    });
+    out.innerHTML = kind === 'tumbling'
+      ? '<b>Tumbling:</b> fixed size, no overlap. Each event is in exactly one window. Use for "count in each minute".'
+      : kind === 'hopping'
+        ? '<b>Hopping:</b> fixed size, a new window starts before the last one ends. Each event is in two windows here. Use for a moving figure such as "last 10 seconds, updated every 5".'
+        : '<b>Session:</b> no fixed size. A window ends when no event arrives for the gap, 5 seconds here. Use for bursts of activity such as one user visit. Three sessions: 1 to 6, 14 to 16, and 31 alone.';
+  }
+  btns.forEach((b) => b.addEventListener('click', () => { btns.forEach((x) => x.setAttribute('aria-pressed', String(x === b))); draw(b.dataset.win); }));
+  draw('tumbling');
+})();
+
+// ---------- join demo ----------
+(function () {
+  const tableEl = document.getElementById('jn-table'), outEl = document.getElementById('jn-out'), msg = document.getElementById('jn-msg');
+  const NAMES = { c1: 'Ana', c2: 'Ben' };
+  let table, out, n;
+  function draw(text) {
+    const keys = Object.keys(table);
+    tableEl.textContent = keys.length ? keys.map((k) => k + ' → ' + table[k]).join('\n') : '(empty)';
+    outEl.textContent = out.length ? out.join('\n') : '(nothing yet)';
+    msg.innerHTML = text;
+  }
+  function reset() { table = {}; out = []; n = 1; draw('The table is empty.'); }
+  document.querySelectorAll('[data-j]').forEach((b) => b.addEventListener('click', () => {
+    const j = b.dataset.j;
+    if (j[0] === 'c') {
+      table[j] = NAMES[j];
+      draw('The table now knows ' + j + '. <b>A table update produces no output in this join.</b> Orders that came earlier are not joined afterwards.');
+    } else {
+      const c = 'c' + j[1], id = 'order ' + n++;
+      if (table[c]) { out.push(id + ' + ' + table[c]); draw(id + ' for ' + c + ' found ' + table[c] + ' in the table and was sent on.'); }
+      else draw('<span class="warn">' + id + ' for ' + c + ' found nothing in the table.</span> An inner join drops it. A left join would send it on with an empty customer.');
+    }
+  }));
+  document.getElementById('jn-reset').addEventListener('click', reset);
+  reset();
+})();
+</script>
+<script src="extras/07.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

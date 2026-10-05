@@ -1,0 +1,13 @@
+# macOS and editors
+.DS_Store
+.vscode/
+.idea/
+
+# generated or downloaded: recreate with the steps in the modules
+tiered/plugins/
+secure/secrets/
+
+# deployment tooling and logs
+.vercel/
+node_modules/
+*.log

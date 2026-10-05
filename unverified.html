@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unverified claims · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ unverified claims</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+<main>
+<div class="hero"><div class="eyebrow">87 claims across the knowledge base</div><h1>Unverified claims</h1><p class="lede">Every statement in the modules that I could not confirm against the Kafka 4.3 documentation or the lab cluster. Each one is also marked in red where it appears. Check these before you rely on them.</p></div>
+<div class="wide">
+<div class="note"><p><strong>What "verified" means here.</strong> A config default counts as verified when I read it from the Kafka 4.3 reference pages or from the running lab cluster. A behaviour counts as verified when a lab command showed it. Everything else that is specific to a version is in this list.</p></div>
+<div class="table-wrap"><table><thead><tr><th>Module</th><th>Claim</th><th>Why it is not verified</th></tr></thead><tbody>
+<tr><td><a href="modules/02-producers.html">02</a></td><td>The broker remembers the last five batches from each producer id for each partition.</td><td>From memory of the idempotence design. The lab showed sequence numbers in the log but did not test the limit of five.</td></tr>
+<tr><td><a href="modules/02-producers.html">02</a></td><td>linger.ms was 0 before Kafka 4.0.</td><td>The 4.3 reference confirms the current default of 5. The older value is from memory.</td></tr>
+<tr><td><a href="modules/03-consumers.html">03</a></td><td>group.initial.rebalance.delay.ms defaults to 3000.</td><td>The lab cluster sets it to 0, so the default could not be read from it.</td></tr>
+<tr><td><a href="modules/04-replication.html">04</a></td><td>How eligible leader replicas work, beyond the two effects the labs showed.</td><td>The labs showed the Elr column and the stalled high watermark. The rules are described from memory.</td></tr>
+<tr><td><a href="modules/05-kraft.html">05</a></td><td>Before a first start, a data directory is prepared with kafka-storage.sh format.</td><td>The Docker image does this itself. I did not run the tool.</td></tr>
+<tr><td><a href="modules/05-kraft.html">05</a></td><td>controller.quorum.bootstrap.servers allows adding and removing controllers without a full restart.</td><td>The setting exists on the lab broker and is empty. Its behaviour was not tested.</td></tr>
+<tr><td><a href="modules/05-kraft.html">05</a></td><td>controller.quorum.auto.join.enable applies only to the newer, changeable quorum.</td><td>The setting exists with the default false. Its behaviour was not tested.</td></tr>
+<tr><td><a href="modules/05-kraft.html">05</a></td><td>With no controller majority, brokers keep serving the partitions they already lead.</td><td>The lab showed that metadata commands hang. It did not test produce and consume in that state.</td></tr>
+<tr><td><a href="modules/05-kraft.html">05</a></td><td>How a controller with a lost disk is replaced, and the role of the directory id.</td><td>Not tested.</td></tr>
+<tr><td><a href="modules/05-kraft.html">05</a></td><td>The upgrade order, and that lowering metadata.version afterwards is limited.</td><td>From memory. Read the upgrade notes for your target version.</td></tr>
+<tr><td><a href="modules/06-transactions.html">06</a></td><td>Aborted transactions are filtered with a transaction index file for each segment.</td><td>The filtering was observed. The file was not inspected.</td></tr>
+<tr><td><a href="modules/06-transactions.html">06</a></td><td>Why the producer epoch rises at the end of every transaction in Kafka 4.</td><td>The lab showed the numbers (3 after three transactions, 5 after two more). The reason is from memory.</td></tr>
+<tr><td><a href="modules/06-transactions.html">06</a></td><td>What transaction.two.phase.commit.enable is for.</td><td>The setting exists with the default false. Not tested.</td></tr>
+<tr><td><a href="modules/06-transactions.html">06</a></td><td>processing.guarantee defaults to at_least_once in Kafka Streams.</td><td>The reference page I read listed the allowed values but not clearly the default.</td></tr>
+<tr><td><a href="modules/07-kafka-streams.html">07</a></td><td>With exactly_once_v2 the commit interval defaults to 100 milliseconds.</td><td>From memory.</td></tr>
+<tr><td><a href="modules/07-kafka-streams.html">07</a></td><td>The status of group.protocol=streams.</td><td>The lab broker accepts the streams protocol. I did not run an application with it.</td></tr>
+<tr><td><a href="modules/08-ecosystem.html">08</a></td><td>auto.register.schemas defaults to true in the schema registry serializers.</td><td>From memory. The lab used the registry through its HTTP interface, not through a serializer.</td></tr>
+<tr><td><a href="modules/09-operations.html">09</a></td><td>Size the page cache to hold the last 30 seconds to a few minutes of writes.</td><td>A rule of thumb, not a measured value.</td></tr>
+<tr><td><a href="modules/10-multi-cluster.html">10</a></td><td>The release in which share groups became production-ready.</td><td>The lab cluster has them turned on (share.version level 1) and the lab used them. The release history was not checked.</td></tr>
+<tr><td><a href="modules/10-multi-cluster.html">10</a></td><td>The default values in the MirrorMaker 2 config table.</td><td>The lab values are verified to work. The defaults column is from memory.</td></tr>
+<tr><td><a href="modules/10-multi-cluster.html">10</a></td><td>Setting the copying consumer to read_committed stops aborted records from being mirrored.</td><td>The lab showed the problem with the default setting. I did not rerun it with the fix.</td></tr>
+<tr><td><a href="modules/11-security-lab.html">11</a></td><td>How SCRAM, token and certificate authentication work.</td><td>The lab ran SASL PLAIN only.</td></tr>
+<tr><td><a href="modules/11-security-lab.html">11</a></td><td>ssl.endpoint.identification.algorithm defaults to https.</td><td>From memory.</td></tr>
+<tr><td><a href="modules/11-security-lab.html">11</a></td><td>Why a read-only user gets a cluster authorization error when it tries to write.</td><td>The error is from the lab. The explanation, the idempotent producer asking for a producer id, is from memory.</td></tr>
+<tr><td><a href="modules/11-security-lab.html">11</a></td><td>Brokers can load a new keystore without a restart.</td><td>Certificate rotation was not run.</td></tr>
+<tr><td><a href="modules/12-monitoring-lab.html">12</a></td><td>A request-time metric exists for FetchConsumer as for Produce.</td><td>Only the Produce metric was read.</td></tr>
+<tr><td><a href="modules/12-monitoring-lab.html">12</a></td><td>Why the exporter could not read consumer groups from Kafka 4.3.</td><td>The failure was observed. I did not find the exact cause.</td></tr>
+<tr><td><a href="modules/12-monitoring-lab.html">12</a></td><td>Request time splits into queue, local, follower-wait and send parts.</td><td>The lab read only the total time.</td></tr>
+<tr><td><a href="modules/13-cdc-outbox-lab.html">13</a></td><td>What the &quot;before&quot; part of a change record holds when REPLICA IDENTITY is not FULL.</td><td>Never tested.</td></tr>
+<tr><td><a href="modules/13-cdc-outbox-lab.html">13</a></td><td>Where the event type travels in an outbox message.</td><td>The consumer output shown did not include it.</td></tr>
+<tr><td><a href="modules/13-cdc-outbox-lab.html">13</a></td><td>Decimals arrive as base64 because of the default decimal handling, and a setting fixes it.</td><td>From memory; not tested.</td></tr>
+<tr><td><a href="modules/13-cdc-outbox-lab.html">13</a></td><td>Why the replication slot looked stuck after a resume, and why the idle outbox slot kept the log.</td><td>Offsets confirmed on a flush interval and an idle table: from memory.</td></tr>
+<tr><td><a href="modules/13-cdc-outbox-lab.html">13</a></td><td>Settings that exist but were not tested: snapshot.mode, heartbeat.interval.ms, max.queue.size, publication.autocreate.mode, slot.drop.on.stop, decimal.handling.mode, tombstones.on.delete, offset.flush.interval.ms.</td><td>Named only; no defaults claimed.</td></tr>
+<tr><td><a href="modules/13-cdc-outbox-lab.html">13</a></td><td>Duplicates after a connector restart; behaviour on a table schema change; a large initial snapshot; ordering with a changed key.</td><td>Not forced in the lab.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>What the __remote_log_metadata topic contains.</td><td>The topic was seen, not read.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>Real object-store backends and which backends the plug-in release supports.</td><td>Only the filesystem backend was run.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>The meaning of chunk.size, overwrite.enabled, task.interval.ms and the metadata listener setting.</td><td>Taken from the setting names.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>The plug-in works across other Kafka and plug-in versions; its support terms.</td><td>One pair was tested.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>A quiet topic never tiers, and a lower segment.ms is the fix.</td><td>Reasoned from the facts; not run.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>Behaviour when remote storage is down.</td><td>Not tested.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>A cold read is slower than a local read and costs requests.</td><td>No timing was taken.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>Replica rebuild and rebalancing get shorter with tiering; recent data still needs replication.</td><td>One broker only.</td></tr>
+<tr><td><a href="modules/14-tiered-storage-lab.html">14</a></td><td>Production values for local retention.</td><td>None tested.</td></tr>
+<tr><td><a href="drills.html">drills</a></td><td>Drills 1 and 6: docker kill timings, and the 45-second session timeout wait.</td><td>The modules show only clean stops.</td></tr>
+<tr><td><a href="drills.html">drills</a></td><td>Drill 7: a consumer that crashes on a poison record, and --shift-by 1.</td><td>No lab has consumer code; only --shift-by -100 was run.</td></tr>
+<tr><td><a href="drills.html">drills</a></td><td>Drill 10: registering the corrected schema.</td><td>Not run in module 08.</td></tr>
+<tr><td><a href="drills.html">drills</a></td><td>Drill 11: a run of a minute or more shows the quota.</td><td>Module 09 only advises it.</td></tr>
+<tr><td><a href="drills.html">drills</a></td><td>Drill 12: the real repair (new topic, copy, switch).</td><td>No module runs it.</td></tr>
+<tr><td><a href="drills.html">drills</a></td><td>Drill 13: filling a disk, and --delete-config retention.ms.</td><td>Neither is shown in the modules.</td></tr>
+<tr><td><a href="drills.html">drills</a></td><td>Drill 14: stopping MirrorMaker mid-drill to measure loss; the read_committed fix.</td><td>Module 10 marks the fix unverified and names no property.</td></tr>
+<tr><td><a href="drills.html">drills</a></td><td>Drill 15: an ACL for group snoop.</td><td>Reuses bob&#x27;s command form with another principal.</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>KIP-890: the first version that shipped it.</td><td>The sources disagree (3.7.0, 4.1.0, and a phase 2 note in 4.0).</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>KIP-345 version 2.4.0.</td><td>From a Jira ticket whose title does not name the KIP.</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>KIP-500 version label 2.8.0, and the KIP-595 version.</td><td>Jira fix versions only; KIP-595&#x27;s ticket has none.</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>KIP-966: the release in which it became the default.</td><td>Preview in 4.0 is confirmed; the default release is not.</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>KIP-405 and KIP-932 &quot;Rejected Alternatives&quot; sections.</td><td>Not seen among the headings read.</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>Section names for KIP-848, KIP-429 and KIP-833.</td><td>The fetches did not return headings.</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>A separate KIP for removing ZooKeeper.</td><td>None found; KIP-833 names 4.0 and the upgrade guide overrules it.</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>The date of Kreps&#x27;s article, 16 December 2013.</td><td>From a search summary; the page fetch failed.</td></tr>
+<tr><td><a href="reading-guide.html">reading guide</a></td><td>Edition years of the two books, and the Kafka docs &quot;Design&quot; subsections.</td><td>Not confirmed.</td></tr>
+<tr><td><a href="capstone.html">capstone</a></td><td>psql through docker exec pg, in the capstone steps.</td><td>No earlier module uses it by that exact form.</td></tr>
+<tr><td><a href="capstone.html">capstone</a></td><td>The registry does not check records written with the lab&#x27;s JSON converters.</td><td>Inference from the configuration.</td></tr>
+<tr><td><a href="capstone.html">capstone</a></td><td>Stopping two brokers then makes an acks=all send fail, with the exact error.</td><td>Based on module 04; the error text was not re-checked.</td></tr>
+<tr><td><a href="capstone.html">capstone</a></td><td>Naming operators in your own Streams code keeps internal topic names stable.</td><td>Module 07 says to name them; no API shown.</td></tr>
+<tr><td><a href="capstone.html">capstone</a></td><td>Starting the cdc and monitoring profiles together.</td><td>Not run.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>Answer q05d: moving combined-mode controllers to dedicated ones one voter at a time.</td><td>The module itself says this migration was not run.</td></tr>
+<tr><td><a href="case-studies.html">case studies</a></td><td>Recipe 1: step sizes, the time and docker stats commands, and laptop capacity for thousands of partitions.</td><td>Not in any module; not run.</td></tr>
+<tr><td><a href="case-studies.html">case studies</a></td><td>Recipe 2: rack labels in the lab compose file, and any delay-injection tool.</td><td>Not run; no tool named.</td></tr>
+<tr><td><a href="case-studies.html">case studies</a></td><td>Recipe 3: a before and after comparison of controller load.</td><td>Commands are from module 05; the comparison was never run.</td></tr>
+<tr><td><a href="case-studies.html">case studies</a></td><td>Recipe 4: docker kill, a one-second polling loop, and its timestamps.</td><td>Module 04 uses only docker stop.</td></tr>
+<tr><td><a href="case-studies.html">case studies</a></td><td>Recipe 5: cold-read pressure, and that a Docker VM cache differs from the host.</td><td>Advice only; not run.</td></tr>
+<tr><td><a href="case-studies.html">case studies</a></td><td>Recipes 6 and 7: a quota run of a minute or more; wait times and broker order for an upgrade; a version upgrade itself.</td><td>Not run.</td></tr>
+<tr><td><a href="case-studies.html">case studies</a></td><td>Case 8: whether a later change closed KAFKA-3861.</td><td>The page cannot tell; the ticket was open when fetched.</td></tr>
+<tr><td><a href="projects.html">projects</a></td><td>docker stats --no-stream; timing a loop with date +%s; du on __cluster_metadata-0.</td><td>No module shows them.</td></tr>
+<tr><td><a href="projects.html">projects</a></td><td>A poison-record crash in project C.</td><td>No lab has a consumer with code.</td></tr>
+<tr><td><a href="projects.html">projects</a></td><td>Project D: output for a partition with no committed offset; adding a Prometheus scrape target and reaching a laptop process.</td><td>Not shown in any module.</td></tr>
+<tr><td><a href="projects.html">projects</a></td><td>Project E: a consumer on kafka-dr with a group copied from main; failback; the MirrorMaker 2 read_committed property.</td><td>Not run; module 10 marks the property unverified.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x02: skipping a record with a positive --shift-by.</td><td>Drill 7 says the step was not run.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x04: upgrade order and downgrade limits.</td><td>Module 05 says they are from memory.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x10: behaviour when a whole zone is lost.</td><td>Only a single-broker failover was measured.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x11: the leader epoch rising under load.</td><td>Not tested.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x12: a 100 MB/s rebuild rate, and that tiering copies only the local part.</td><td>The rate is an assumption; no replica was rebuilt.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x13: failover timing for a kill.</td><td>Drill 1 says a kill was not run.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x15: the failover step and the read_committed fix.</td><td>Neither was run or rerun.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x16 and x17: cold reads slower and billed per request; behaviour when remote storage is down.</td><td>No timing taken; not tested.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x18: a 50 MB/s restore rate.</td><td>Module 07&#x27;s example rate, not measured.</td></tr>
+<tr><td><a href="interview.html">interview</a></td><td>x22 and x23: a quota run of a minute or more; any Kafka backup tool.</td><td>Not run; not tested.</td></tr>
+</tbody></table></div>
+<h2>Also worth knowing</h2>
+<ul>
+<li>Five items that were on this list are now verified by labs: broker metric names (module 12), security (module 11), Debezium behaviour and a stopped connector (module 13), and tiered storage (module 14).</li>
+<li>The case studies are public write-ups read from the outside. Three candidate cases (a "Kafka 4.0 on Kubernetes" postmortem, a "$2.3M fintech" story, and Uber's multi-region disaster recovery blog) were dropped because they could not be confirmed. The question and recipe items above are advice, not measurements.</li>
+<li>Lab outputs are from one run on one laptop, on 4 and 5 October 2026, with image <code>apache/kafka:4.3.1</code>. Throughput and timing numbers will differ on your machine.</li>
+<li>The Java code sample in module 07 was not compiled. The lab ran the original example from the Kafka image.</li>
+<li>The last step of module 07's lab, the application reset, was not run after the wait it needs.</li>
+<li>Explanations of long-standing designs, such as the page cache, the in-sync set and Raft voting, are from general knowledge. They are not marked one by one.</li>
+</ul>
+</div>
+</main>
+<script src="assets/kb.js"></script>
+</body>
+</html>

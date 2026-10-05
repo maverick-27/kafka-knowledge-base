@@ -1,0 +1,45 @@
+# A one-broker cluster with tiered storage, for module 14. "Remote" storage here is a
+# folder inside the container (/tmp/remote), so that you can look at it. In production
+# it would be an object store.
+# The plug-in is not part of Apache Kafka. Download it once (see module 14, step 1).
+# Start:  docker compose up -d        Stop:  docker compose down
+services:
+  kafka-tier:
+    image: apache/kafka:4.3.1
+    hostname: kafka-tier
+    container_name: kafka-tier
+    volumes:
+      - ./plugins:/tiered:ro
+    tmpfs:
+      - /tmp/remote:uid=1000,gid=1000
+    environment:
+      CLUSTER_ID: 'Tier1g3nShT-eMCtK--Xtier'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-tier:9093'
+      KAFKA_LISTENERS: 'PLAINTEXT://:19092,CONTROLLER://:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-tier:19092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      # how often the broker deletes local segments; short, so that the lab is quick
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 5000
+
+      # --- tiered storage ---
+      KAFKA_REMOTE_LOG_STORAGE_SYSTEM_ENABLE: 'true'
+      KAFKA_REMOTE_LOG_STORAGE_MANAGER_CLASS_NAME: 'io.aiven.kafka.tieredstorage.RemoteStorageManager'
+      KAFKA_REMOTE_LOG_STORAGE_MANAGER_CLASS_PATH: '/tiered/core/*:/tiered/filesystem/*'
+      KAFKA_REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_RLMM_CONFIG_REMOTE_LOG_METADATA_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_REMOTE_LOG_MANAGER_TASK_INTERVAL_MS: 5000
+      # settings of the plug-in itself
+      KAFKA_RSM_CONFIG_CHUNK_SIZE: 4194304
+      KAFKA_RSM_CONFIG_STORAGE_BACKEND_CLASS: 'io.aiven.kafka.tieredstorage.storage.filesystem.FileSystemStorage'
+      KAFKA_RSM_CONFIG_STORAGE_ROOT: '/tmp/remote'
+      KAFKA_RSM_CONFIG_STORAGE_OVERWRITE_ENABLED: 'true'

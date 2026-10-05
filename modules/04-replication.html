@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 Replication · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .lane.out .lane-name { color: var(--gone); }
+  .lane.out .lane-cells { opacity: .5; }
+  .cell.safe { background: var(--read-soft); border-color: var(--read); }
+  .cell.small { min-width: 38px; height: 38px; font-size: .8rem; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 04 Replication</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 04 · Day 4 · Kafka 4.3</div>
+  <h1>Replication</h1>
+  <p class="lede">Each partition lives on several brokers. One leads, the others copy. This module explains which records are safe, which records consumers can see, and what happens to both when a broker fails.</p>
+
+  <div class="lab-panel" id="hw-demo" style="margin:0">
+    <h3>Try it: three copies of one partition</h3>
+    <p class="hint">Green records are copied to every in-sync broker: they are safe, and consumers can read them. Amber records exist only on some brokers so far.</p>
+    <div class="controls">
+      <button class="btn primary" type="button" id="hw-produce">Write a record</button>
+      <button class="btn" type="button" id="hw-fetch">Followers copy</button>
+      <button class="btn" type="button" id="hw-slow">Make broker 3 slow</button>
+      <button class="btn" type="button" id="hw-wait">30 seconds pass</button>
+      <button class="btn" type="button" id="hw-reset">Start again</button>
+    </div>
+    <div id="hw-lanes"></div>
+    <div class="readout" id="hw-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>A single broker can fail, and its disk can be lost. So Kafka keeps each partition on several brokers. The number of copies is the <strong>replication factor</strong>. Each copy is a <strong>replica</strong>.</p>
+  <p>For each partition, one replica is the <strong>leader</strong>. Producers write to the leader and consumers normally read from it. The other replicas are <strong>followers</strong>. A follower does one thing: it fetches new records from the leader and appends them to its own log, in the same order.</p>
+  <p>Kafka tracks which followers are up to date. That set, with the leader, is the <strong>in-sync replicas</strong>, usually written ISR. A record is <strong>committed</strong> when every in-sync replica has it. Only committed records are shown to consumers, and only an in-sync replica may become the new leader. These two rules together mean that a consumer never sees a record that a later leader does not have.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> Followers copy the leader, the in-sync set defines which records are committed, and a new leader is chosen from that set so that committed records survive.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+    <p>Think of one writer and two people who copy the writer's notebook line by line. A line counts as official when all the copiers who are keeping up have it. If a copier falls far behind, the writer stops waiting for that person. If the writer leaves, one of the copiers who was keeping up takes over, and nothing official is lost.</p>
+    <p>Four numbers describe a partition at any moment.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Log end offset</td><td>Each replica has its own: the offset its next record will get.</td></tr>
+          <tr><td>In-sync replicas (ISR)</td><td>The leader plus the followers that have caught up within <code>replica.lag.time.max.ms</code>, 30 seconds.</td></tr>
+          <tr><td>High watermark</td><td>The lowest log end offset among the in-sync replicas. Everything below it is committed.</td></tr>
+          <tr><td><code>min.insync.replicas</code></td><td>The smallest in-sync set for which the leader still accepts writes with <code>acks=all</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Use the demo at the top of the page. Write three records, let the followers copy, and watch the green area grow. Then make broker 3 slow and write more: the green area stops, because broker 3 is still in the in-sync set. Let 30 seconds pass: broker 3 is removed, and the green area jumps forward.</p>
+
+    <h3>How many failures can you survive?</h3>
+  </div>
+
+  <div class="lab-panel wide reveal" id="dur-demo">
+    <h3>Try it: replication factor and the in-sync minimum</h3>
+    <div class="controls">
+      <label for="du-rf">Replication factor</label>
+      <select id="du-rf"><option>1</option><option>2</option><option selected>3</option><option>5</option></select>
+      <label for="du-min">min.insync.replicas</label>
+      <select id="du-min"></select>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="du-write">–</b><span>brokers can fail and <code>acks=all</code> writes continue</span></div>
+      <div class="stat"><b id="du-safe">–</b><span>brokers can be lost for ever without losing a committed record</span></div>
+    </div>
+    <div class="readout" id="du-out" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>How a follower copies</h3>
+    <ol class="steps">
+      <li class="on">The follower sends a fetch request to the leader. The request says "give me records from offset N", where N is the follower's log end offset.</li>
+      <li class="on">The leader answers with records, and with the current high watermark.</li>
+      <li class="on">The follower appends the records and remembers the high watermark.</li>
+      <li class="on">The next fetch request asks from a higher offset. This tells the leader that the follower has everything before it.</li>
+      <li class="on">The leader moves the high watermark to the lowest position that all in-sync replicas have reached. Producers that wait with <code>acks=all</code> get their answer.</li>
+    </ol>
+    <p>A follower learns a new high watermark one fetch later than the leader. This small delay matters when a consumer reads from a follower.</p>
+
+    <h3>Leaving and joining the in-sync set</h3>
+    <p>A follower is removed from the in-sync set when it has not caught up to the leader's log end for <code>replica.lag.time.max.ms</code>. The rule is about time, not about a number of records. A follower that is slow but steady stays in. A follower that is stopped is removed after 30 seconds, or at once if the broker shuts down cleanly.</p>
+    <p>The leader proposes each change to the <strong>controller</strong>, the part of Kafka that owns cluster metadata (module 05). A follower rejoins when it has caught up to the leader's log end offset.</p>
+
+    <h3>Choosing a new leader</h3>
+    <p>When a leader fails, the controller picks a new one from the in-sync set. In the lab this took about one second. Clients get an error on their next request, refresh their metadata, and continue with the new leader.</p>
+    <p>The first broker in a partition's replica list is the <strong>preferred leader</strong>. Kafka spreads preferred leaders evenly when it creates a topic. After failures, leadership drifts to fewer brokers. Kafka moves it back by itself (<code>auto.leader.rebalance.enable</code>), or you can ask for it with a tool.</p>
+
+    <h3>Leader epochs: how logs are made equal again</h3>
+    <p>Each time a partition gets a new leader, its <strong>leader epoch</strong> goes up by one. Every batch stores the epoch of the leader that wrote it. Each replica keeps a small file, <code>leader-epoch-checkpoint</code>, that lists each epoch and the offset where it started.</p>
+    <p>When a broker returns as a follower, it may hold records that the new leader never had. It asks the leader: "where did epoch N end for you?" If its own log is longer for that epoch, it cuts off the extra records and then copies from the leader. This is <strong>truncation</strong>.</p>
+    <p>Truncation of records above the high watermark is normal and harmless: those records were never committed. Truncation below the high watermark is data loss. It happens only after an unclean election.</p>
+
+    <h3>Unclean leader election</h3>
+    <p>Suppose every in-sync replica is down. The partition has no leader and is offline. You have two choices. Wait for an in-sync replica to return: no data is lost, but the partition is unavailable. Or let a replica that was <em>not</em> in sync become leader: the partition works again, but every record that replica did not have is gone. The second choice is an <strong>unclean leader election</strong>. It is off by default.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="un-demo">
+    <h3>Step through it: an unclean election, as it happened in the lab</h3>
+    <div class="lane" id="un-b2"><div class="lane-name">broker 2</div><div class="lane-cells"></div></div>
+    <div class="lane" id="un-b3"><div class="lane-name">broker 3</div><div class="lane-cells"></div></div>
+    <div class="controls">
+      <button class="btn primary" type="button" id="un-next">Next step</button>
+      <button class="btn" type="button" id="un-reset">Start again</button>
+    </div>
+    <div class="readout" id="un-out" aria-live="polite"></div>
+  </div>
+
+  <div class="col">
+    <h3>Eligible leader replicas</h3>
+    <p>Kafka 4 adds a second list for each partition, the <strong>eligible leader replicas</strong>, shown as <code>Elr</code> in the describe output. When the in-sync set becomes smaller than <code>min.insync.replicas</code>, a replica that leaves the set is not forgotten. It moves to this list, because it is known to hold every committed record. The high watermark does not move while the in-sync set is below the minimum. If the in-sync set becomes empty, the controller may still elect a replica from this list safely.</p>
+    <p>You saw both effects in earlier labs. In module 02, a record written with <code>acks=1</code> below the minimum was accepted but not visible. In this module's lab, a partition with no leader showed <code>Isr:</code> empty and <code>Elr: 2</code>: the controller knew that broker 2 was the safe choice and waited for it. <span class="tag-unverified">unverified beyond what the lab showed</span></p>
+
+    <h3>Racks and zones</h3>
+    <p>If all replicas of a partition sit in one rack or one cloud zone, one failure takes all of them. Set <code>broker.rack</code> on each broker. Kafka then places the replicas of each partition in different racks when it creates a topic.</p>
+
+    <h3>Moving replicas</h3>
+    <p>To add a broker, remove one, or balance load, you move replicas with the reassignment tool. The new replica copies the whole partition, joins the in-sync set, and then the old replica is removed. The copy uses network and disk, so on a busy cluster you set a throttle to protect normal traffic.</p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>The defaults below were read from the lab cluster with <code>kafka-configs.sh --describe --all</code>, where the tool marks each value as a default or an override.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Config</th><th>Where</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td>replication factor</td><td>Set when a topic is created</td><td>from <code>default.replication.factor</code></td><td>Number of copies of each partition.</td><td>Use 3 in production. Use 5 only for data that must survive two failures while writes continue.</td></tr>
+        <tr><td><code>default.replication.factor</code></td><td>Broker</td><td>1 (the lab sets 3)</td><td>Replication factor for topics created without one.</td><td>Set 3 on every production cluster.</td></tr>
+        <tr><td><code>min.insync.replicas</code></td><td>Topic or broker</td><td>1 (the lab sets 2)</td><td>Smallest in-sync set that accepts <code>acks=all</code> writes.</td><td>Set 2 with a replication factor of 3. With the default of 1, <code>acks=all</code> can mean "one broker".</td></tr>
+        <tr><td><code>unclean.leader.election.enable</code></td><td>Topic or broker</td><td><code>false</code></td><td>Allows a replica that was not in sync to become leader.</td><td>Turn on only for topics where being available matters more than losing records, such as metrics.</td></tr>
+        <tr><td><code>replica.lag.time.max.ms</code></td><td>Broker</td><td>30000</td><td>A follower that has not caught up for this long leaves the in-sync set.</td><td>Lower it to drop a slow follower sooner, so that <code>acks=all</code> latency recovers faster. Too low makes the set unstable.</td></tr>
+        <tr><td><code>num.replica.fetchers</code></td><td>Broker</td><td>1</td><td>Threads a follower uses to copy from each leader broker.</td><td>Raise it when followers cannot keep up on a busy cluster.</td></tr>
+        <tr><td><code>replica.fetch.max.bytes</code></td><td>Broker</td><td>1048576</td><td>Most data a follower takes from one partition in one fetch.</td><td>Raise it together with the largest allowed record size.</td></tr>
+        <tr><td><code>replica.fetch.wait.max.ms</code>, <code>replica.fetch.min.bytes</code></td><td>Broker</td><td>500, 1</td><td>How long the leader may hold a follower's fetch when there is no new data.</td><td>Rarely.</td></tr>
+        <tr><td><code>replica.fetch.backoff.ms</code></td><td>Broker</td><td>1000</td><td>Pause after a failed fetch.</td><td>Rarely.</td></tr>
+        <tr><td><code>replica.socket.timeout.ms</code></td><td>Broker</td><td>30000</td><td>Network timeout for follower fetches.</td><td>Rarely.</td></tr>
+        <tr><td><code>replica.high.watermark.checkpoint.interval.ms</code></td><td>Broker</td><td>5000</td><td>How often the high watermark is saved to disk.</td><td>Rarely.</td></tr>
+        <tr><td><code>auto.leader.rebalance.enable</code></td><td>Broker</td><td><code>true</code></td><td>Moves leadership back to preferred leaders in the background.</td><td>Leave it on.</td></tr>
+        <tr><td><code>leader.imbalance.check.interval.seconds</code></td><td>Broker</td><td>300</td><td>How often that check runs.</td><td>Rarely.</td></tr>
+        <tr><td><code>broker.rack</code></td><td>Broker</td><td>null</td><td>The rack or zone of this broker.</td><td>Always set it when brokers are in more than one rack or zone.</td></tr>
+        <tr><td><code>replica.selector.class</code></td><td>Broker</td><td>null</td><td>Lets consumers fetch from a follower in their own rack.</td><td>Set the rack-aware selector in multi-zone clusters to cut cross-zone traffic.</td></tr>
+        <tr><td><code>controlled.shutdown.enable</code></td><td>Broker</td><td><code>true</code></td><td>On a clean stop, the broker first hands its leaderships to other brokers.</td><td>Leave it on.</td></tr>
+        <tr><td><code>acks</code></td><td>Producer</td><td><code>all</code></td><td>See module 02. Replication protects a record only when the producer waits for it.</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>A leader fails</h3>
+    <dl>
+      <dt>What happens</dt><dd>The controller elects a new leader from the in-sync set. In the lab, about 1 second after the broker stopped.</dd>
+      <dt>You observe</dt><dd>Clients log "not leader" errors for a moment, refresh metadata, and continue. The describe output shows a smaller <code>Isr</code>.</dd>
+      <dt>Risk</dt><dd>None for committed records. Producers with <code>acks=1</code> can lose the records the old leader had not yet shared.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Under-replicated partitions</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Nothing yet. The in-sync set is smaller than the replica list, so you have less protection than you paid for.</dd>
+      <dt>You observe</dt><dd><code>kafka-topics.sh --describe --under-replicated-partitions</code> lists them. The broker metric "under-replicated partitions" is above 0.</dd>
+      <dt>Cause</dt><dd>A broker is down, or slow (disk, network, long pauses), or it cannot keep up with the write rate.</dd>
+      <dt>Fix</dt><dd>Treat a value above 0 that does not go away as an incident. Find the slow broker before a second one fails.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The in-sync set falls below the minimum</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Producers with <code>acks=all</code> get <code>NOT_ENOUGH_REPLICAS</code>. Consumers can still read what is already committed.</dd>
+      <dt>You observe</dt><dd><code>kafka-topics.sh --describe --under-min-isr-partitions</code> lists them.</dd>
+      <dt>Fix</dt><dd>Restore the missing broker. This state is the system working as designed: it refuses writes it cannot protect.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A partition has no leader</h3>
+    <dl>
+      <dt>What breaks</dt><dd>No reads and no writes for that partition.</dd>
+      <dt>You observe</dt><dd><code>Leader: none</code>. In the lab: <code>Isr:</code> empty, <code>Elr: 2</code>. A producer times out with "Expiring 1 record(s) … The request has not been sent".</dd>
+      <dt>Choice</dt><dd>Bring back a broker from the <code>Elr</code> or last in-sync set: no loss. Or force an unclean election: the partition works again and some records are lost. Make this decision for each topic before the incident, not during it.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Unclean election loses committed records</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Records that producers were told are safe disappear. Consumers that already read them now hold offsets that point to different records.</dd>
+      <dt>You observe</dt><dd>The end offset goes backwards. In the lab it went from 20 to 10, and the returning broker logged: "Truncating risky2-0 to offset 10 below high watermark 20".</dd>
+      <dt>Fix</dt><dd>There is none after the fact. Prevent it: three replicas, a minimum of 2, replicas in different racks, and unclean election off.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>One slow follower makes every write slow</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Latency for <code>acks=all</code> rises on partitions that the slow broker follows.</dd>
+      <dt>Cause</dt><dd>While the follower is still in the in-sync set, the leader waits for it. It stays in for up to 30 seconds after it stops keeping up, and a follower that is slow but steady may never be removed.</dd>
+      <dt>Fix</dt><dd>Find the slow broker by its follower fetch metrics. Fix it or remove it from service. This is why uneven hardware in one cluster is a problem.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A reassignment overloads the cluster</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Moving many large partitions at once uses the network and disks. Client latency rises and followers fall out of sync.</dd>
+      <dt>Fix</dt><dd>Move in small groups and set a throttle with the <code>--throttle</code> option of the reassignment tool. Run <code>--verify</code> at the end, which also removes the throttle.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against the lab cluster. This lab stops and starts brokers. Never stop two brokers of the lab cluster at the same time except where a step says so: two of three must run for the cluster to manage itself (module 05).</p>
+  </div>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092
+d() { k kafka-topics.sh --bootstrap-server $B --describe --topic $1 | tail -1; }</code></pre></div>
+
+  <h3>Step 1. Stop a leader</h3>
+  <p>Create a topic whose replica list is 3, 1, 2. Broker 3 is the preferred leader. Give only <code>--replica-assignment</code>; the tool refuses it together with <code>--partitions</code>.</p>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic ha2 --replica-assignment 3:1:2
+seq 1 100 | k kafka-console-producer.sh --bootstrap-server $B --topic ha2
+d ha2
+docker exec kafka-1 cat /tmp/kraft-combined-logs/ha2-0/leader-epoch-checkpoint
+
+docker stop kafka-3
+d ha2</code></pre></div>
+  <pre class="out">Topic: ha2  Partition: 0  Leader: 3  Replicas: 3,1,2  Isr: 3,1,2  Elr:  LastKnownElr:
+0
+1
+0 0                ← epoch 0 started at offset 0
+
+Topic: ha2  Partition: 0  Leader: 1  Replicas: 3,1,2  Isr: 1,2    Elr:  LastKnownElr:</pre>
+  <p>Broker 1 became leader about one second after broker 3 stopped. The in-sync set is now 1 and 2.</p>
+
+  <h3>Step 2. Write under the new leader and read the epoch file</h3>
+  <div class="code"><pre><code>seq 101 150 | k kafka-console-producer.sh --bootstrap-server $B --topic ha2
+docker exec kafka-1 cat /tmp/kraft-combined-logs/ha2-0/leader-epoch-checkpoint</code></pre></div>
+  <pre class="out">0
+2
+0 0
+1 100              ← epoch 1 started at offset 100</pre>
+  <p>The file now has two lines of data. Epoch 0, under broker 3, covers offsets 0 to 99. Epoch 1, under broker 1, starts at offset 100. A returning replica uses exactly this to find where its log may differ.</p>
+
+  <h3>Step 3. Bring the broker back and restore the preferred leader</h3>
+  <div class="code"><pre><code>docker start kafka-3
+# wait 14 seconds
+d ha2
+k kafka-leader-election.sh --bootstrap-server $B --election-type preferred --topic ha2 --partition 0
+d ha2</code></pre></div>
+  <pre class="out">Topic: ha2  Partition: 0  Leader: 1  Replicas: 3,1,2  Isr: 1,2,3
+Successfully completed leader election (PREFERRED) for partitions ha2-0
+Topic: ha2  Partition: 0  Leader: 3  Replicas: 3,1,2  Isr: 1,2,3</pre>
+  <p>Broker 3 copied the 50 records it missed, rejoined the in-sync set, and then took leadership back. All 150 records are there.</p>
+
+  <h3>Step 4. Lose data with an unclean election</h3>
+  <p>This topic has two replicas, on brokers 2 and 3, and a minimum of 1. That is a weak setup, chosen so that the failure is easy to cause.</p>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic risky2 --replica-assignment 2:3 \
+  --config min.insync.replicas=1
+seq 1 10 | k kafka-console-producer.sh --bootstrap-server $B --topic risky2
+
+docker stop kafka-3            # broker 3 now misses everything that follows
+# wait 8 seconds
+seq 11 20 | k kafka-console-producer.sh --bootstrap-server $B --topic risky2
+k kafka-get-offsets.sh --bootstrap-server $B --topic risky2
+
+docker stop kafka-2; docker start kafka-3    # the only in-sync broker is gone
+# wait 20 seconds
+d risky2</code></pre></div>
+  <pre class="out">risky2:0:20
+
+Topic: risky2  Partition: 0  Leader: none  Replicas: 2,3  Isr:   Elr: 2  LastKnownElr: 2</pre>
+  <p>Broker 3 is running, but it has only 10 of the 20 records, so Kafka does not make it leader. The partition is offline. Now force it:</p>
+  <div class="code"><pre><code>k kafka-leader-election.sh --bootstrap-server $B --election-type unclean --topic risky2 --partition 0
+d risky2
+k kafka-get-offsets.sh --bootstrap-server $B --topic risky2</code></pre></div>
+  <pre class="out">Successfully completed leader election (UNCLEAN) for partitions risky2-0
+Topic: risky2  Partition: 0  Leader: 3  Replicas: 2,3  Isr: 3
+risky2:0:10</pre>
+  <p>The end offset went from 20 back to 10. Write five new records and bring broker 2 back:</p>
+  <div class="code"><pre><code>seq 21 25 | k kafka-console-producer.sh --bootstrap-server $B --topic risky2
+docker start kafka-2
+# wait 16 seconds
+docker exec kafka-2 /opt/kafka/bin/kafka-dump-log.sh --print-data-log \
+  --files /tmp/kraft-combined-logs/risky2-0/00000000000000000000.log | grep -o 'payload: .*'
+docker logs kafka-2 2>&1 | grep -i 'risky2-0.*truncat'</code></pre></div>
+  <pre class="out">values on broker 2:  1 2 3 4 5 6 7 8 9 10 21 22 23 24 25
+
+WARN [UnifiedLog partition=risky2-0] Truncating risky2-0 to offset 10 below high watermark 20</pre>
+  <p>Broker 2 had values 11 to 20. When it returned as a follower, it cut them off to match the new leader. Offsets 10 to 14 now hold the values 21 to 25. A consumer that had committed offset 20 would now be past the end of the log.</p>
+  <p>One more finding. Setting <code>unclean.leader.election.enable=true</code> on the topic did not elect a leader within 8 seconds in my first attempt. The explicit election command did, at once.</p>
+
+  <h3>Step 5. Move a replica</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic move --replica-assignment 1:2
+docker exec kafka-1 sh -c 'echo "{\"version\":1,\"partitions\":[{\"topic\":\"move\",\"partition\":0,\"replicas\":[1,3]}]}" > /tmp/move.json'
+k kafka-reassign-partitions.sh --bootstrap-server $B --reassignment-json-file /tmp/move.json --execute
+k kafka-reassign-partitions.sh --bootstrap-server $B --reassignment-json-file /tmp/move.json --verify
+d move</code></pre></div>
+  <pre class="out">Successfully started partition reassignment for move-0
+Reassignment of partition move-0 is completed.
+Topic: move  Partition: 0  Leader: 1  Replicas: 1,3  Isr: 1,3</pre>
+  <p>The replica moved from broker 2 to broker 3. On a real cluster, add <code>--throttle</code> with a byte rate to the execute command.</p>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Replication factor 3 means no data loss.</td><td>Only with <code>acks=all</code>, <code>min.insync.replicas</code> of 2 or more, and unclean election off. With the default minimum of 1, one broker can hold the only copy of an acknowledged record.</td></tr>
+        <tr><td>Set <code>min.insync.replicas</code> equal to the replication factor for the most safety.</td><td>Then one stopped broker blocks all writes, including during a routine restart.</td></tr>
+        <tr><td>A follower is out of sync when it is many records behind.</td><td>The rule is time: it has not caught up for 30 seconds.</td></tr>
+        <tr><td>Consumers can read a record as soon as the leader has it.</td><td>They can read it when it is below the high watermark: when all in-sync replicas have it.</td></tr>
+        <tr><td>Replication is a backup.</td><td>Replication copies every write, including a wrong delete or a bad record. It protects against broker failure, not against mistakes.</td></tr>
+        <tr><td>Kafka uses majority voting for partition data.</td><td>It uses the in-sync set, which can shrink to one broker. Majority voting is used only for cluster metadata (module 05).</td></tr>
+        <tr><td>Truncation always means data loss.</td><td>Truncation above the high watermark removes records that were never committed. Only truncation below it is loss.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>Why is "3 replicas, minimum 2" the standard?</summary><div class="answer">
+    <p>It survives one broker failure with writes still accepted, because two in-sync replicas remain. Every acknowledged record is on at least two brokers, so one permanent loss cannot remove it. And you can restart brokers one at a time without stopping producers.</p>
+    <p>A minimum of 1 gives up the durability. A minimum of 3 gives up availability during any restart. Two replicas with a minimum of 2 also stops writes on any single failure.</p>
+  </div></details>
+
+  <details class="qa"><summary>Why does Kafka use an in-sync set and not a majority, as many databases do?</summary><div class="answer">
+    <p>With majority voting, surviving f failures needs 2f + 1 copies. With an in-sync set, f + 1 copies are enough, because any member of the set has every committed record. For large data this saves a great deal of disk.</p>
+    <p>The cost is that a write waits for the slowest in-sync replica, where a majority system waits only for the faster half. Kafka limits this with the time rule that removes a slow follower. Kafka does use majority voting for its metadata, where the data is small and latency matters more.</p>
+  </div></details>
+
+  <details class="qa"><summary>You must restart every broker for an upgrade. How do you avoid an outage?</summary><div class="answer">
+    <p>One broker at a time. Before each restart, check that no partition is under-replicated. Stop the broker cleanly so that it hands over leadership first. After it starts, wait until it has rejoined every in-sync set before you touch the next one.</p>
+    <p>This works only if every topic has at least 3 replicas and a minimum of 2. Find the topics that do not, before the upgrade, with a describe of all topics.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you spread a cluster over three zones?</summary><div class="answer">
+    <p>Set <code>broker.rack</code> to the zone. With three replicas, each partition gets one replica in each zone. With a minimum of 2, losing a whole zone leaves two in-sync replicas, and writes continue.</p>
+    <p>Check the costs. Every write crosses zones twice, which adds latency and network charges. Consumers can read from the replica in their own zone to save the read traffic. The controllers must also be spread over the three zones.</p>
+  </div></details>
+
+  <details class="qa"><summary>During an incident a partition is offline and the business wants it back now. What do you weigh?</summary><div class="answer">
+    <p>What is lost with an unclean election: every record the chosen replica does not have, and the meaning of every committed consumer offset beyond that point. Downstream systems may already have acted on records that will no longer exist.</p>
+    <p>What it costs to wait: the time to restart the in-sync broker or recover its disk. If the broker is only stopped, waiting minutes is almost always better. If its disk is destroyed, the data is gone in either case, and electing the best remaining replica is right. The describe output's <code>Elr</code> and <code>LastKnownElr</code> tell you which broker to bring back.</p>
+  </div></details>
+
+  <details class="qa"><summary>What makes a follower fall out of sync under normal load?</summary><div class="answer">
+    <p>A slow disk on the follower. A saturated network link. Long pauses of the Java runtime. One fetcher thread that copies too many busy partitions. A leader that serves very old data to another reader from disk and evicts recent data from memory.</p>
+    <p>Look at follower fetch lag and at how often the in-sync set shrinks and expands. Frequent changes with no broker failures point to a broker at its limit.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. What is the in-sync set?</summary><div class="answer"><p>The leader plus the followers that have caught up with the leader within <code>replica.lag.time.max.ms</code>.</p></div></details>
+  <details class="qa"><summary>2. What is the high watermark?</summary><div class="answer"><p>The lowest log end offset among the in-sync replicas. Records below it are committed and visible to consumers.</p></div></details>
+  <details class="qa"><summary>3. Three replicas, minimum 2. Two brokers are down. What can clients do?</summary><div class="answer"><p>Consumers can read committed records. Producers with <code>acks=all</code> are refused. Producers with <code>acks=1</code> are accepted, but their records are not visible until the in-sync set reaches the minimum again.</p></div></details>
+  <details class="qa"><summary>4. What is the preferred leader of a partition?</summary><div class="answer"><p>The first broker in its replica list.</p></div></details>
+  <details class="qa"><summary>5. What does the leader epoch count?</summary><div class="answer"><p>Leader changes for one partition. It goes up by one with each new leader.</p></div></details>
+  <details class="qa"><summary>6. A broker returns and cuts records from its log. When is that harmless?</summary><div class="answer"><p>When the records were above the high watermark: they were never committed.</p></div></details>
+  <details class="qa"><summary>7. What does an unclean leader election trade?</summary><div class="answer"><p>It makes the partition available again and loses the records that the new leader did not have.</p></div></details>
+  <details class="qa"><summary>8. What does <code>Elr</code> in the describe output list?</summary><div class="answer"><p>Eligible leader replicas: brokers outside the in-sync set that are known to hold every committed record and can be elected safely.</p></div></details>
+  <details class="qa"><summary>9. Which command lists partitions with fewer in-sync replicas than replicas?</summary><div class="answer"><p><code>kafka-topics.sh --describe --under-replicated-partitions</code>.</p></div></details>
+  <details class="qa"><summary>10. Why is replication not a backup?</summary><div class="answer"><p>It copies mistakes as faithfully as good data. A deleted topic is deleted on every replica.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="03-consumers.html">← 03 Consumers</a>
+    <a class="btn primary" href="05-kraft.html">05 KRaft →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- in-sync set and high watermark demo ----------
+(function () {
+  const lanes = document.getElementById('hw-lanes');
+  const out = document.getElementById('hw-out');
+  const slowBtn = document.getElementById('hw-slow');
+  let leo, isr, slow, lastNote;
+
+  function reset() { leo = [3, 3, 3]; isr = [true, true, true]; slow = false; lastNote = 'Three records, copied everywhere.'; slowBtn.textContent = 'Make broker 3 slow'; draw(); }
+  function hw() { return Math.min(...leo.filter((_, i) => isr[i])); }
+
+  function draw() {
+    const mark = hw();
+    lanes.innerHTML = '';
+    const names = ['broker 1 · leader', 'broker 2', 'broker 3' + (slow ? ' · slow' : '')];
+    leo.forEach((end, i) => {
+      const lane = document.createElement('div');
+      lane.className = 'lane' + (isr[i] ? '' : ' out');
+      const cells = document.createElement('div');
+      cells.className = 'lane-cells';
+      for (let o = Math.max(0, end - 12); o < end; o++) {
+        const c = document.createElement('div');
+        c.className = 'cell small ' + (o < mark ? 'safe' : 'new');
+        c.textContent = o;
+        c.style.animation = 'none';
+        cells.appendChild(c);
+      }
+      lane.innerHTML = '<div class="lane-name">' + names[i] + (isr[i] ? '' : '<br>not in sync') + '</div>';
+      lane.appendChild(cells);
+      lanes.appendChild(lane);
+    });
+    const members = isr.map((v, i) => (v ? i + 1 : null)).filter(Boolean).join(', ');
+    const waiting = leo[0] - mark;
+    out.innerHTML = lastNote + '\nIn-sync set: <b>' + members + '</b>   High watermark: <b>' + mark + '</b>   Consumers can read offsets below ' + mark + '.'
+      + (waiting > 0 ? '\n<span class="warn">' + waiting + ' record' + (waiting === 1 ? '' : 's') + ' not committed yet.</span> A producer with acks=all is still waiting.' : '\nEvery record is committed.');
+  }
+
+  document.getElementById('hw-produce').addEventListener('click', () => { leo[0]++; lastNote = 'The leader wrote offset ' + (leo[0] - 1) + '.'; draw(); });
+  document.getElementById('hw-fetch').addEventListener('click', () => {
+    leo[1] = leo[0];
+    if (!slow) { leo[2] = leo[0]; if (!isr[2]) { isr[2] = true; lastNote = 'Broker 3 caught up and rejoined the in-sync set.'; draw(); return; } }
+    lastNote = slow ? 'Broker 2 copied. Broker 3 is slow and did not.' : 'Both followers copied.';
+    draw();
+  });
+  slowBtn.addEventListener('click', () => {
+    slow = !slow;
+    slowBtn.textContent = slow ? 'Make broker 3 fast again' : 'Make broker 3 slow';
+    lastNote = slow ? 'Broker 3 is now slow. It is still in the in-sync set.' : 'Broker 3 is fast again. Press "Followers copy".';
+    draw();
+  });
+  document.getElementById('hw-wait').addEventListener('click', () => {
+    if (isr[2] && leo[2] < leo[0]) { isr[2] = false; lastNote = 'Broker 3 did not catch up for 30 seconds (replica.lag.time.max.ms). The leader removed it from the in-sync set.'; }
+    else lastNote = '30 seconds passed. Every in-sync follower is caught up, so nothing changes.';
+    draw();
+  });
+  document.getElementById('hw-reset').addEventListener('click', reset);
+  reset();
+})();
+
+// ---------- durability calculator ----------
+(function () {
+  const rf = document.getElementById('du-rf'), min = document.getElementById('du-min');
+  const w = document.getElementById('du-write'), s = document.getElementById('du-safe'), out = document.getElementById('du-out');
+  function fillMin() {
+    const n = Number(rf.value), prev = Number(min.value) || 2;
+    min.innerHTML = '';
+    for (let i = 1; i <= n; i++) { const o = document.createElement('option'); o.textContent = i; min.appendChild(o); }
+    min.value = String(Math.min(prev, n));
+  }
+  function draw() {
+    const n = Number(rf.value), m = Number(min.value);
+    const writeTol = n - m, lossTol = m - 1;
+    w.textContent = writeTol; s.textContent = lossTol;
+    let msg;
+    if (n === 1) msg = '<span class="warn">One copy. Any failure stops the partition, and a lost disk loses the data.</span>';
+    else if (m === 1) msg = '<span class="warn">With a minimum of 1, the in-sync set can shrink to the leader alone.</span> An acknowledged record may then exist on one broker only. If that broker is lost, so is the record.';
+    else if (m === n) msg = '<span class="warn">Every replica must be in sync.</span> One stopped broker blocks all acks=all writes, also during a routine restart.';
+    else msg = '<b>Balanced.</b> Writes continue with ' + writeTol + ' broker' + (writeTol === 1 ? '' : 's') + ' down, and every acknowledged record is on at least ' + m + ' brokers.';
+    out.innerHTML = msg + '\nThis assumes producers use acks=all and unclean election is off.';
+  }
+  rf.addEventListener('change', () => { fillMin(); draw(); });
+  min.addEventListener('change', draw);
+  fillMin(); min.value = '2'; draw();
+})();
+
+// ---------- unclean election stepper ----------
+(function () {
+  const b2 = document.querySelector('#un-b2 .lane-cells'), b3 = document.querySelector('#un-b3 .lane-cells');
+  const n2 = document.querySelector('#un-b2 .lane-name'), n3 = document.querySelector('#un-b3 .lane-name');
+  const out = document.getElementById('un-out');
+  const next = document.getElementById('un-next');
+  let step = 0;
+
+  function fill(el, values, lostFrom, freshFrom) {
+    el.innerHTML = '';
+    values.forEach((v, i) => {
+      const c = document.createElement('div');
+      c.className = 'cell small' + (lostFrom !== null && i >= lostFrom ? ' gone' : '') + (freshFrom !== null && i >= freshFrom ? ' new' : '');
+      c.textContent = v;
+      c.style.animation = 'none';
+      el.appendChild(c);
+    });
+  }
+  const one = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  const STEPS = [
+    () => { n2.innerHTML = 'broker 2<br>leader'; n3.innerHTML = 'broker 3<br>follower'; fill(b2, one(1, 10), null, null); fill(b3, one(1, 10), null, null);
+      return 'Start. Both brokers hold values 1 to 10. In-sync set: 2, 3. End offset 10.'; },
+    () => { n3.innerHTML = 'broker 3<br>stopped'; fill(b2, one(1, 20), null, 10);
+      return 'Broker 3 stops. Producers write values 11 to 20 to broker 2. In-sync set: 2. End offset 20.\nThe producers used acks=all and got "success", because the minimum is 1.'; },
+    () => { n2.innerHTML = 'broker 2<br>stopped'; n3.innerHTML = 'broker 3<br>running'; fill(b2, one(1, 20), null, null);
+      return 'Broker 2 stops, then broker 3 starts. Broker 3 has only values 1 to 10.\n<span class="warn">Leader: none.</span> Kafka waits for broker 2 (Elr: 2). The partition is offline.'; },
+    () => { n3.innerHTML = 'broker 3<br>leader'; fill(b3, one(1, 10), null, null);
+      return 'An operator forces an unclean election. Broker 3 becomes leader. <span class="warn">End offset goes from 20 back to 10.</span>'; },
+    () => { fill(b3, one(1, 10).concat(one(21, 25)), null, 10);
+      return 'Producers write values 21 to 25. On broker 3 they take offsets 10 to 14.'; },
+    () => { n2.innerHTML = 'broker 2<br>follower'; fill(b2, one(1, 20), 10, null);
+      return 'Broker 2 starts as a follower. Its log differs from the leader after offset 10.\nIt logs: "Truncating risky2-0 to offset 10 below high watermark 20".'; },
+    () => { fill(b2, one(1, 10).concat(one(21, 25)), null, 10);
+      return '<span class="warn">Values 11 to 20 are gone from every broker.</span> Both logs are equal again: 1 to 10, then 21 to 25.\nThe producers of 11 to 20 were told their records were safe.'; },
+  ];
+  function show() { out.innerHTML = 'Step ' + (step + 1) + ' of ' + STEPS.length + '. ' + STEPS[step](); next.disabled = step === STEPS.length - 1; }
+  next.addEventListener('click', () => { if (step < STEPS.length - 1) { step++; show(); } });
+  document.getElementById('un-reset').addEventListener('click', () => { step = 0; fill(b3, [], null, null); show(); });
+  show();
+})();
+</script>
+<script src="extras/04.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

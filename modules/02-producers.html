@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02 Producers · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 02 Producers</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 02 · Day 2 · Kafka 4.3</div>
+  <h1>Producers</h1>
+  <p class="lede">A producer does much more than send a message. It groups records into batches, chooses when to send, waits for a chosen level of confirmation, and tries again after a failure without creating duplicates.</p>
+
+  <div class="figure" style="margin:0">
+    <div class="pipeline" aria-label="The path of a record inside the producer">
+      <div class="stage"><b>1 send()</b>Your code hands over a key and a value.</div>
+      <div class="stage"><b>2 Serialize</b>Key and value become bytes.</div>
+      <div class="stage"><b>3 Partition</b>The key's hash picks a partition.</div>
+      <div class="stage"><b>4 Batch</b>The record waits in memory with others for the same partition.</div>
+      <div class="stage"><b>5 Send</b>A background thread sends full or old batches to the leader.</div>
+      <div class="stage"><b>6 Confirm</b>The broker answers. Your callback runs.</div>
+    </div>
+    <p class="figcap">Steps 1 to 4 run in your thread and return at once. Steps 5 and 6 happen later, in the producer's own sender thread. This is why <code>send()</code> returns before the record is safe.</p>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>A <strong>producer</strong> is the client library that writes records to Kafka. It runs inside your application. It finds which broker leads each partition, sends records there, and handles failures.</p>
+  <p>The producer exists as a smart client because of speed and safety. If each record made its own network request, Kafka would be slow. So the producer collects records into <strong>batches</strong>. And networks fail, so the producer retries. A retry can write the same record twice, so the producer and the broker count records to detect a repeat. This is <strong>idempotence</strong>: doing the same thing twice has the same result as doing it once.</p>
+  <p>Three decisions matter most. How long to wait for a batch to fill. How many brokers must have the record before the producer treats it as written. And what to do when a write fails.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> The producer trades a few milliseconds of delay for large batches, waits for the level of confirmation you choose, and retries safely because every batch carries a sequence number.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+    <p>Think of a post office counter. You hand over a letter and leave at once. Behind the counter is one bag for each destination. A van leaves when a bag is full, or when the bag has waited long enough. The driver brings back a receipt, and only then do you know the letter arrived.</p>
+    <ul>
+      <li>The <strong>bag</strong> is a batch: one for each partition.</li>
+      <li><strong>Full</strong> is <code>batch.size</code>, measured in bytes.</li>
+      <li><strong>Waited long enough</strong> is <code>linger.ms</code>.</li>
+      <li>The <strong>receipt</strong> is the acknowledgement, set by <code>acks</code>.</li>
+    </ul>
+    <p>Use the demo to feel the trade. A slow stream of records with no waiting gives one tiny batch for each record. A little waiting gives large batches and far fewer requests.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="batch-demo">
+    <h3>Try it: when does a batch leave?</h3>
+    <p class="hint">Records are 200 bytes each and all go to one partition. The bar is one batch filling. The animation is slowed down or speeded up so that you can see it.</p>
+    <div class="controls">
+      <label for="bd-rate">Records each second</label>
+      <select id="bd-rate"><option>10</option><option>100</option><option selected>1000</option><option>10000</option><option>100000</option></select>
+      <label for="bd-linger">linger.ms</label>
+      <select id="bd-linger"><option>0</option><option selected>5</option><option>20</option><option>100</option></select>
+      <label for="bd-size">batch.size</label>
+      <select id="bd-size"><option value="16384" selected>16384 (default)</option><option value="65536">65536</option><option value="131072">131072</option></select>
+    </div>
+    <div class="meter"><div class="meter-fill" id="bd-fill"></div><div class="meter-label" id="bd-label"></div></div>
+    <div class="stats">
+      <div class="stat"><b id="bd-recs">–</b><span>records in each batch</span></div>
+      <div class="stat"><b id="bd-reqs">–</b><span>batches sent each second</span></div>
+      <div class="stat"><b id="bd-wait">–</b><span>longest wait added to a record</span></div>
+      <div class="stat"><b id="bd-why">–</b><span>what triggers the send</span></div>
+    </div>
+    <p class="figcap">With <code>linger.ms=0</code> the real producer still forms batches when it is busy, because records pile up while the sender thread is working. The demo shows the idle case.</p>
+  </div>
+
+  <div class="col">
+    <h3>What "written" means: acks</h3>
+    <p>Each partition has one <strong>leader</strong> broker and some <strong>follower</strong> brokers that copy it. The <code>acks</code> setting says how many of them must have the record before the leader answers.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>acks</th><th>The leader answers when</th><th>Risk</th></tr></thead>
+        <tbody>
+          <tr><td><code>0</code></td><td>It does not answer. The producer does not wait.</td><td>Records are lost without any error.</td></tr>
+          <tr><td><code>1</code></td><td>The leader has written the record to its own log.</td><td>If the leader fails before a follower copies the record, it is lost. The producer thinks it succeeded.</td></tr>
+          <tr><td><code>all</code> (default)</td><td>Every in-sync follower has copied the record.</td><td>None, when at least <code>min.insync.replicas</code> brokers are in sync. Module 04 explains "in sync".</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="lab-panel wide reveal" id="acks-demo">
+    <h3>Try it: the leader fails just after a write</h3>
+    <div class="controls">
+      <span id="ad-lbl">acks</span>
+      <div class="seg" role="group" aria-labelledby="ad-lbl">
+        <button type="button" data-acks="0" aria-pressed="false">0</button>
+        <button type="button" data-acks="1" aria-pressed="false">1</button>
+        <button type="button" data-acks="all" aria-pressed="true">all</button>
+      </div>
+      <button class="btn primary" type="button" id="ad-run">Send record A, then stop the leader</button>
+    </div>
+    <div class="nodes" id="ad-nodes">
+      <div class="node leader" data-n="0"><div class="node-name">broker 1 · leader</div></div>
+      <div class="node" data-n="1"><div class="node-name">broker 2 · follower</div></div>
+      <div class="node" data-n="2"><div class="node-name">broker 3 · follower</div></div>
+    </div>
+    <div class="readout" id="ad-out" aria-live="polite">Choose a value and press the button.</div>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>The path of one record</h3>
+    <ol class="steps">
+      <li class="on"><strong>Metadata.</strong> On the first send to a topic, the producer asks any broker which broker leads each partition. It keeps the answer and refreshes it every 5 minutes (<code>metadata.max.age.ms</code>) or after an error.</li>
+      <li class="on"><strong>Serialize.</strong> The key serializer and value serializer turn your objects into bytes.</li>
+      <li class="on"><strong>Partition.</strong> With a key: murmur2 hash of the key bytes, remainder after division by the partition count. Without a key: the producer picks one partition and stays on it until about <code>batch.size</code> bytes have gone there, then picks another. It prefers brokers that answer quickly.</li>
+      <li class="on"><strong>Accumulate.</strong> The record joins the open batch for its partition, in a memory pool of <code>buffer.memory</code> bytes. If the pool is full, <code>send()</code> waits up to <code>max.block.ms</code> and then throws an error.</li>
+      <li class="on"><strong>Send.</strong> The sender thread takes every batch that is full or older than <code>linger.ms</code>, groups them by broker, and sends one request to each broker. Up to 5 requests can be waiting for an answer on one connection.</li>
+      <li class="on"><strong>Answer.</strong> On success, the producer completes the record's future and calls your callback with the partition and offset. On a failure that can be retried, the batch goes back in the queue.</li>
+    </ol>
+
+    <h3>Compression</h3>
+    <p>The producer compresses a whole batch, not single records. Larger batches compress better. The broker stores the batch as it arrives, and the consumer decompresses it. So the processor cost is paid by the clients, and the saving applies to the network, the disk and the copies on other brokers.</p>
+
+    <h3>Retries and the delivery timeout</h3>
+    <p>The producer retries almost without limit: <code>retries</code> is 2147483647. The real limit is time. <code>delivery.timeout.ms</code>, 2 minutes by default, counts from the moment <code>send()</code> returns. It covers the wait in the batch, every attempt, and every pause between attempts. When it ends, the producer gives up and reports an error for the record.</p>
+    <p>Some errors are worth a retry: the leader moved, a request timed out, too few brokers are in sync. Others are not, and fail at once: the record is too large, serialization failed, the client is not allowed to write.</p>
+
+    <h3>Idempotence: how a retry avoids duplicates</h3>
+    <p>A retry is dangerous. Suppose the broker wrote the batch but its answer was lost. The producer sends the batch again, and the log now holds it twice. A second danger is order: batch 1 fails, batch 2 succeeds, then the retry of batch 1 lands after batch 2.</p>
+    <p>Idempotence, on by default, fixes both:</p>
+    <ol>
+      <li>At start, the broker gives the producer a <strong>producer id</strong>.</li>
+      <li>The producer numbers the records for each partition: sequence 0, 1, 2, and so on. Each batch carries its first sequence number.</li>
+      <li>The broker remembers the last five batches from each producer id for each partition. <span class="tag-unverified">unverified</span></li>
+      <li>If a batch arrives with a sequence number the broker has already written, the broker answers "success" and writes nothing.</li>
+      <li>If a batch arrives with a sequence number that leaves a gap, the broker rejects it. The producer then sends the missing batch first.</li>
+    </ol>
+  </div>
+
+  <div class="lab-panel wide reveal" id="idem-demo">
+    <h3>Try it: a retry with and without idempotence</h3>
+    <div class="controls">
+      <span id="id-lbl">enable.idempotence</span>
+      <div class="seg" role="group" aria-labelledby="id-lbl">
+        <button type="button" data-idem="on" aria-pressed="true">true</button>
+        <button type="button" data-idem="off" aria-pressed="false">false</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn primary" type="button" data-scn="lostack">The answer for A is lost</button>
+      <button class="btn primary" type="button" data-scn="reorder">A fails, B succeeds, A is retried</button>
+    </div>
+    <div class="lane"><div class="lane-name">partition log</div><div class="lane-cells" id="id-log"></div></div>
+    <div class="readout" id="id-out" aria-live="polite">Choose a scenario.</div>
+  </div>
+
+  <div class="col">
+    <div class="note warn">
+      <p><strong>The limit of idempotence.</strong> It protects against duplicates from the producer's own retries, inside one producer session. It does not help if your application calls <code>send()</code> twice for the same event, or if the application restarts and sends again: a new session gets a new producer id. For those cases you need transactions (module 06) or a consumer that can detect repeats.</p>
+    </div>
+    <p>Idempotence needs <code>acks=all</code>, at most 5 requests in flight, and retries above 0. If you set a value that conflicts with these and also set <code>enable.idempotence=true</code>, the producer refuses to start.</p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>All defaults below come from the Kafka 4.3 producer configuration reference.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Producer config</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>bootstrap.servers</code></td><td>none (required)</td><td>A few broker addresses used to find the rest of the cluster.</td><td>List two or three brokers so that one failed broker does not block start-up.</td></tr>
+        <tr><td><code>key.serializer</code>, <code>value.serializer</code></td><td>none (required)</td><td>Classes that turn keys and values into bytes.</td><td>Always set. Module 08 covers schema-based serializers.</td></tr>
+        <tr><td><code>acks</code></td><td><code>all</code></td><td>How many brokers must have the record before the leader answers.</td><td>Use <code>1</code> or <code>0</code> only for data you can lose, such as metrics.</td></tr>
+        <tr><td><code>enable.idempotence</code></td><td><code>true</code></td><td>Sequence numbers that stop duplicates and reordering on retry.</td><td>Leave it on.</td></tr>
+        <tr><td><code>retries</code></td><td>2147483647</td><td>Maximum number of attempts.</td><td>Do not lower it. Control retries with <code>delivery.timeout.ms</code>.</td></tr>
+        <tr><td><code>delivery.timeout.ms</code></td><td>120000 (2 minutes)</td><td>Total time allowed for one record, from <code>send()</code> to a final answer.</td><td>Lower it when a late record has no value. Raise it to ride through a longer broker failure.</td></tr>
+        <tr><td><code>request.timeout.ms</code></td><td>30000 (30 seconds)</td><td>Time to wait for the answer to one request before a retry.</td><td>Rarely.</td></tr>
+        <tr><td><code>retry.backoff.ms</code>, <code>retry.backoff.max.ms</code></td><td>100, 1000</td><td>Pause before a retry. It grows from the first value up to the second.</td><td>Rarely.</td></tr>
+        <tr><td><code>max.in.flight.requests.per.connection</code></td><td>5</td><td>Requests sent to one broker that have no answer yet.</td><td>Keep at 5 or lower. Above 5, idempotence cannot be used.</td></tr>
+        <tr><td><code>batch.size</code></td><td>16384</td><td>Upper size of one batch in bytes. A full batch is sent at once.</td><td>Raise to 65536 or 131072 for high throughput.</td></tr>
+        <tr><td><code>linger.ms</code></td><td>5</td><td>How long a batch waits for more records. It was 0 before Kafka 4.0. <span class="tag-unverified">unverified</span></td><td>Raise to 20 to 100 for throughput. Set 0 only when each millisecond counts.</td></tr>
+        <tr><td><code>compression.type</code></td><td><code>none</code></td><td>Compression for each batch: <code>gzip</code>, <code>snappy</code>, <code>lz4</code> or <code>zstd</code>.</td><td>Turn on <code>lz4</code> or <code>zstd</code> for text or JSON. The lab shows a 10-times saving.</td></tr>
+        <tr><td><code>compression.gzip.level</code>, <code>compression.lz4.level</code>, <code>compression.zstd.level</code></td><td>−1, 9, 3</td><td>Effort level for each algorithm.</td><td>Raise for a better ratio at more processor cost.</td></tr>
+        <tr><td><code>buffer.memory</code></td><td>33554432 (32 MiB)</td><td>Memory for records that wait to be sent.</td><td>Raise when you have many partitions or large batches.</td></tr>
+        <tr><td><code>max.block.ms</code></td><td>60000 (1 minute)</td><td>How long <code>send()</code> can wait for memory or for metadata.</td><td>Lower it when your thread must not be held, for example in a request handler.</td></tr>
+        <tr><td><code>max.request.size</code></td><td>1048576</td><td>Largest request, and so the largest record, the producer will send.</td><td>Raise together with the topic's <code>max.message.bytes</code>.</td></tr>
+        <tr><td><code>partitioner.class</code></td><td>null</td><td>Your own partitioner. Null means the built-in behaviour.</td><td>Only when the key hash is not enough, for example to isolate one large customer.</td></tr>
+        <tr><td><code>partitioner.ignore.keys</code></td><td><code>false</code></td><td>When true, keys are not used to pick the partition.</td><td>When you need keys for compaction but want an even spread.</td></tr>
+        <tr><td><code>partitioner.adaptive.partitioning.enable</code></td><td><code>true</code></td><td>Records without a key go more often to brokers that answer quickly.</td><td>Rarely.</td></tr>
+        <tr><td><code>partitioner.availability.timeout.ms</code></td><td>0</td><td>When above 0, a broker that does not accept requests for this long gets no records without keys.</td><td>Set it when one slow broker hurts everyone.</td></tr>
+        <tr><td><code>transactional.id</code>, <code>transaction.timeout.ms</code></td><td>null, 60000</td><td>Turn on transactions.</td><td>Module 06.</td></tr>
+        <tr><td><code>client.id</code></td><td>empty</td><td>A name that appears in broker logs, metrics and quotas.</td><td>Always set it. It makes problems much easier to trace.</td></tr>
+        <tr><td><code>metadata.max.age.ms</code></td><td>300000 (5 minutes)</td><td>How often the producer refreshes its view of the cluster.</td><td>Lower it if you add partitions and need producers to see them sooner.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h3>Two tested starting points</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Goal</th><th>Settings</th></tr></thead>
+        <tbody>
+          <tr><td>Safety first (payments, orders)</td><td>Defaults: <code>acks=all</code>, idempotence on. On the topic: 3 copies and <code>min.insync.replicas=2</code>.</td></tr>
+          <tr><td>Throughput (logs, clickstream)</td><td><code>batch.size=131072</code>, <code>linger.ms=20</code>, <code>compression.type=lz4</code>, and keep <code>acks=all</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>The result of send() is ignored</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Records are lost and nobody knows. This is the most common producer bug.</dd>
+      <dt>Cause</dt><dd><code>send()</code> returns a future. An error arrives later, in the future or the callback. Code that reads neither never sees it.</dd>
+      <dt>Fix</dt><dd>Always pass a callback that logs and counts errors, or wait for the future.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Too few brokers are in sync</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Every write with <code>acks=all</code> fails.</dd>
+      <dt>You observe</dt><dd><code>NOT_ENOUGH_REPLICAS</code> in the producer log, repeated until the delivery timeout. The lab shows it.</dd>
+      <dt>Cause</dt><dd>Fewer brokers are in sync than <code>min.insync.replicas</code>. The broker refuses the write because it cannot keep the promise.</dd>
+      <dt>Fix</dt><dd>Bring the broker back. Do not lower the minimum to 1 as a quick fix: that removes the protection you set it for.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The delivery timeout expires</h3>
+    <dl>
+      <dt>You observe</dt><dd>An error like "Expiring 12 record(s) for orders-3: 120000 ms has passed since batch creation".</dd>
+      <dt>Cause</dt><dd>The leader was unreachable or too slow for 2 minutes. Or the producer creates records faster than the broker accepts them.</dd>
+      <dt>Fix</dt><dd>Find why the broker is slow before you raise the timeout. Decide what your application does with a record that failed: retry later, write to a fallback store, or stop.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The producer's memory is full</h3>
+    <dl>
+      <dt>What breaks</dt><dd><code>send()</code> stops returning at once. After <code>max.block.ms</code> it throws a timeout error.</dd>
+      <dt>Cause</dt><dd>Your code produces faster than the sender thread can send, so <code>buffer.memory</code> fills.</dd>
+      <dt>Fix</dt><dd>Treat it as back-pressure: slow the source. Larger batches and compression raise the send rate. More memory only delays the problem.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>acks=1 loses a confirmed record</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The producer received success, but the record is not in the topic.</dd>
+      <dt>Cause</dt><dd>The leader answered and then failed before any follower copied the record. The new leader never had it.</dd>
+      <dt>Fix</dt><dd>Use <code>acks=all</code> for data you cannot lose.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>One partition is much busier than the others</h3>
+    <dl>
+      <dt>You observe</dt><dd>One partition grows fast and its consumer falls behind, while others are idle.</dd>
+      <dt>Cause</dt><dd>Key skew. One key, or a null-like value such as "unknown", carries a large share of the records.</dd>
+      <dt>Fix</dt><dd>Choose a key with more distinct values, or add a second part to the key. For one very large customer, use a custom partitioner that spreads that customer over several partitions, if you can accept less ordering for it.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Duplicates after an application restart</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The same event is in the topic twice, with idempotence on.</dd>
+      <dt>Cause</dt><dd>The application crashed after <code>send()</code> but before it recorded that the event was sent. After the restart it sends again with a new producer id.</dd>
+      <dt>Fix</dt><dd>Use the outbox pattern (module 08) or transactions (module 06), or make the consumer ignore repeats by an event id.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against the lab cluster. The numbers are from one laptop where all three brokers share one disk. Your numbers will differ; the ratios are what matter.</p>
+  </div>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092
+k kafka-topics.sh --bootstrap-server $B --create --topic perf --partitions 3 --replication-factor 3</code></pre></div>
+
+  <h3>Step 1. Measure what batching does</h3>
+  <p>The performance tool sends 300,000 records of 200 bytes. Give it producer settings after <code>--command-property</code>, separated by spaces.</p>
+  <div class="code"><pre><code># one record in each batch
+k kafka-producer-perf-test.sh --topic perf --num-records 300000 --record-size 200 \
+  --throughput -1 --command-property bootstrap.servers=$B batch.size=1 linger.ms=0
+
+# defaults
+k kafka-producer-perf-test.sh --topic perf --num-records 300000 --record-size 200 \
+  --throughput -1 --command-property bootstrap.servers=$B
+
+# larger batches
+k kafka-producer-perf-test.sh --topic perf --num-records 300000 --record-size 200 \
+  --throughput -1 --command-property bootstrap.servers=$B batch.size=131072 linger.ms=20</code></pre></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Settings</th><th>Records each second</th><th>MB each second</th><th>Average latency</th></tr></thead>
+      <tbody>
+        <tr><td><code>batch.size=1</code>, <code>linger.ms=0</code></td><td>13,244</td><td>2.53</td><td>7,046 ms</td></tr>
+        <tr><td>Defaults (16384, 5)</td><td>400,000</td><td>76.29</td><td>70 ms</td></tr>
+        <tr><td><code>batch.size=131072</code>, <code>linger.ms=20</code></td><td>710,900</td><td>135.59</td><td>2.3 ms</td></tr>
+        <tr><td>The same, with <code>compression.type=lz4</code></td><td>545,455</td><td>104.04</td><td>2.1 ms</td></tr>
+        <tr><td>The same, with <code>acks=1</code></td><td>656,455</td><td>125.21</td><td>1.5 ms</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Batching is the large effect: 54 times more throughput from the first row to the third. Note also that latency went <em>down</em> as batches grew, because the tool sends as fast as it can and small batches make a long queue.</p>
+  <p>Do not read much into the last two rows. On one laptop the network is not a limit, so compression only adds processor work, and the test data is random bytes that do not compress. <code>acks=1</code> was not faster than <code>acks=all</code> here. On a real network the picture changes.</p>
+
+  <h3>Step 2. See compression on disk</h3>
+  <p>Send the same 20,000 JSON lines to two topics, one without compression and one with zstd. The console producer has its own flag for compression.</p>
+  <div class="code"><pre><code>gen() { awk 'BEGIN{for(i=0;i<20000;i++) printf "{\"orderId\":%d,\"status\":\"created\",\"currency\":\"CAD\",\"country\":\"CA\"}\n", i}'; }
+for c in none zstd; do
+  k kafka-topics.sh --bootstrap-server $B --create --topic comp-$c --partitions 1 --replication-factor 3
+  gen | k kafka-console-producer.sh --bootstrap-server $B --topic comp-$c --compression-codec $c \
+    --command-property linger.ms=50 --command-property batch.size=65536
+done
+docker exec kafka-1 sh -c 'ls -l /tmp/kraft-combined-logs/comp-*-0/*.log'</code></pre></div>
+  <div class="out-label">Output (sizes in bytes)</div>
+  <pre class="out">1548818   comp-none-0/00000000000000000000.log
+ 157335   comp-zstd-0/00000000000000000000.log</pre>
+  <p>The compressed log is about one tenth of the size. The dump tool shows the codec on each batch:</p>
+  <pre class="out">baseOffset: 0 lastOffset: 821 count: 822 … size: 3416 magic: 2 compresscodec: zstd …</pre>
+  <p>822 records in 3,416 bytes: about 4 bytes for each record.</p>
+
+  <h3>Step 3. See idempotence in the log</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic idem --partitions 1 --replication-factor 3
+echo a | k kafka-console-producer.sh --bootstrap-server $B --topic idem --command-property enable.idempotence=false
+echo b | k kafka-console-producer.sh --bootstrap-server $B --topic idem
+k kafka-dump-log.sh --files /tmp/kraft-combined-logs/idem-0/00000000000000000000.log | grep baseOffset</code></pre></div>
+  <div class="out-label">Output (shortened)</div>
+  <pre class="out">baseOffset: 0 lastOffset: 0 count: 1 baseSequence: -1 lastSequence: -1 producerId: -1 producerEpoch: -1
+baseOffset: 1 lastOffset: 1 count: 1 baseSequence: 0  lastSequence: 0  producerId: 16 producerEpoch: 0</pre>
+  <p>The first batch has no producer id and no sequence number: the broker cannot detect a repeat of it. The second has producer id 16 and sequence 0. Run the second command again and you get a new producer id, which is the limit described above.</p>
+
+  <h3>Step 4. Records without a key stay together</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic nokey --partitions 3 --replication-factor 3
+seq 1 9 | k kafka-console-producer.sh --bootstrap-server $B --topic nokey
+k kafka-get-offsets.sh --bootstrap-server $B --topic nokey</code></pre></div>
+  <pre class="out">nokey:0:0
+nokey:1:9
+nokey:2:0</pre>
+  <p>All nine records went to partition 1. They were not spread one by one. The producer stays on one partition until about <code>batch.size</code> bytes have gone there.</p>
+
+  <h3>Step 5. Break the in-sync minimum</h3>
+  <p>Create a topic that needs all three brokers in sync, then stop one broker.</p>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic strict --partitions 1 \
+  --replication-factor 3 --config min.insync.replicas=3
+docker stop kafka-3
+# wait 12 seconds
+k kafka-topics.sh --bootstrap-server $B --describe --topic strict
+
+echo hello | k kafka-console-producer.sh --bootstrap-server $B --topic strict \
+  --command-property delivery.timeout.ms=6000 --command-property request.timeout.ms=3000 \
+  --command-property linger.ms=0</code></pre></div>
+  <div class="out-label">Output (shortened)</div>
+  <pre class="out">Topic: strict  Partition: 0  Leader: 1  Replicas: 3,1,2  Isr: 1,2  Elr: 3  LastKnownElr:
+
+WARN Got error produce response … on topic-partition strict-0, retrying (2 attempts left). Error: NOT_ENOUGH_REPLICAS
+WARN Got error produce response … on topic-partition strict-0, retrying (1 attempts left). Error: NOT_ENOUGH_REPLICAS
+WARN Got error produce response … on topic-partition strict-0, retrying (0 attempts left). Error: NOT_ENOUGH_REPLICAS
+ERROR Error when sending message to topic strict with key: null, value: 5 bytes with error: …</pre>
+  <p>Only brokers 1 and 2 are in sync, the topic needs 3, so the leader refuses the write. Now send with <code>acks=1</code>:</p>
+  <div class="code"><pre><code>echo hello | k kafka-console-producer.sh --bootstrap-server $B --topic strict \
+  --request-required-acks 1 --command-property enable.idempotence=false
+k kafka-get-offsets.sh --bootstrap-server $B --topic strict
+
+docker start kafka-3
+# wait 12 seconds
+k kafka-get-offsets.sh --bootstrap-server $B --topic strict</code></pre></div>
+  <pre class="out">strict:0:0      ← while broker 3 is stopped
+strict:0:1      ← after broker 3 returns</pre>
+  <p>This result surprised me, so read it with care. The producer got no error: the leader accepted the write and put it in its log. But the end offset that clients see did not move while fewer brokers were in sync than the minimum. Consumers could not read the record until broker 3 came back. So <code>acks=1</code> below the minimum is "accepted but not visible". Module 04 explains the mechanism, the high watermark.</p>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td><code>send()</code> returned, so the record is written.</td><td>It is only in the producer's memory. It is written when the future completes without an error.</td></tr>
+        <tr><td>Idempotence gives exactly-once delivery.</td><td>It removes duplicates from the producer's own retries in one session. Exactly-once from end to end needs transactions and care at the consumer.</td></tr>
+        <tr><td><code>linger.ms</code> adds that delay to every record.</td><td>It is the longest wait. A full batch leaves at once, and under load batches fill before the time ends.</td></tr>
+        <tr><td><code>batch.size</code> is a number of records.</td><td>It is a number of bytes.</td></tr>
+        <tr><td><code>acks=all</code> means all brokers.</td><td>It means all brokers that are in sync at that moment. That can be one broker, unless <code>min.insync.replicas</code> says otherwise.</td></tr>
+        <tr><td>Records without a key are spread one by one over partitions.</td><td>They go in groups: the producer stays on a partition for about one batch.</td></tr>
+        <tr><td>Lower <code>retries</code> to avoid duplicates.</td><td>Idempotence removes the duplicates. Fewer retries only lose more records.</td></tr>
+        <tr><td>One producer for each thread is safer.</td><td>The producer is safe to share between threads, and one shared producer makes better batches.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>Product wants "no lost orders and no duplicate orders". What do you build?</summary><div class="answer">
+    <p>For loss: <code>acks=all</code>, three copies, <code>min.insync.replicas=2</code>, and code that handles the send error. For duplicates from retries: idempotence, which is on by default.</p>
+    <p>Then name the gap. The order is first saved in a database and then sent to Kafka. A crash between the two steps loses or repeats the event. Close the gap with the outbox pattern: write the event to a table in the same database transaction, and let a separate process copy the table to Kafka. Consumers still get the event at least once, so give each event an id and make consumers ignore repeats.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you tune a producer for latency below 10 milliseconds?</summary><div class="answer">
+    <p>Set <code>linger.ms=0</code> and keep batches small enough that they do not wait. Keep <code>acks=all</code> if the data matters, and make replication fast instead: brokers close to each other, fast disks. Turn off compression or use lz4. Measure the 99th percentile, not the average, and watch for pauses in the client's runtime.</p>
+    <p>Then ask if 10 milliseconds is really needed from end to end, because the consumer's fetch settings add delay too.</p>
+  </div></details>
+
+  <details class="qa"><summary>A broker is slow but not dead. What happens to producers?</summary><div class="answer">
+    <p>Batches for the partitions it leads wait longer. They fill <code>buffer.memory</code>, and then <code>send()</code> blocks for every partition, also the healthy ones. One slow broker can stall the whole producer.</p>
+    <p>Defences: for records without keys, the adaptive partitioner sends less to the slow broker, and <code>partitioner.availability.timeout.ms</code> can exclude it. For records with keys there is no escape, so keep <code>max.block.ms</code> low enough that your application fails fast, and alert on the producer's buffer and request latency metrics.</p>
+  </div></details>
+
+  <details class="qa"><summary>Why can max.in.flight be 5 and order still be safe?</summary><div class="answer">
+    <p>The broker keeps the sequence numbers of the last five batches for each producer and partition. If batch 1 fails while batches 2 to 5 are in flight, the broker rejects 2 to 5 because they leave a gap, and the producer resends all of them in order. More than five could not be checked, which is why the limit is 5.</p>
+  </div></details>
+
+  <details class="qa"><summary>What is a good key?</summary><div class="answer">
+    <p>The thing whose events must stay in order: an order id, an account id, a device id. It should have many distinct values, with no single value that dominates. It should be stable: the same entity always gives the same key.</p>
+    <p>Check the two failure cases. A key with few values, such as a country, gives hot partitions. A random key gives a perfect spread and no useful order.</p>
+  </div></details>
+
+  <details class="qa"><summary>Where should compression happen?</summary><div class="answer">
+    <p>In the producer. It then saves network, broker disk, replication traffic and consumer network at once. The topic setting <code>compression.type=producer</code>, the default, tells the broker to keep the batch as it arrived.</p>
+    <p>If the topic names a different codec, the broker must decompress and compress again, which costs broker processor time. Avoid that.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. When is a batch sent?</summary><div class="answer"><p>When it reaches <code>batch.size</code> bytes, or when it has waited <code>linger.ms</code>, whichever comes first.</p></div></details>
+  <details class="qa"><summary>2. What is the default for <code>linger.ms</code> in Kafka 4?</summary><div class="answer"><p>5 milliseconds. Before 4.0 it was 0.</p></div></details>
+  <details class="qa"><summary>3. What does <code>acks=all</code> wait for?</summary><div class="answer"><p>All brokers that are in sync for that partition at that moment have copied the record.</p></div></details>
+  <details class="qa"><summary>4. What happens to a write with <code>acks=all</code> when fewer brokers are in sync than <code>min.insync.replicas</code>?</summary><div class="answer"><p>The leader refuses it with <code>NOT_ENOUGH_REPLICAS</code>. The producer retries until the delivery timeout.</p></div></details>
+  <details class="qa"><summary>5. Which setting really limits retries?</summary><div class="answer"><p><code>delivery.timeout.ms</code>, 2 minutes by default.</p></div></details>
+  <details class="qa"><summary>6. Which three values identify a batch for duplicate detection?</summary><div class="answer"><p>The producer id, the producer epoch, and the sequence number for that partition.</p></div></details>
+  <details class="qa"><summary>7. Name one duplicate that idempotence does not prevent.</summary><div class="answer"><p>The application sends the same event again after a restart, or calls <code>send()</code> twice. A new session has a new producer id.</p></div></details>
+  <details class="qa"><summary>8. Where do records without a key go?</summary><div class="answer"><p>To one partition for about one batch, then to another. The producer prefers brokers that answer quickly.</p></div></details>
+  <details class="qa"><summary>9. <code>send()</code> blocks and then throws a timeout. Name two causes.</summary><div class="answer"><p>The memory pool <code>buffer.memory</code> is full, or the producer cannot get metadata for the topic. Both wait up to <code>max.block.ms</code>.</p></div></details>
+  <details class="qa"><summary>10. Why do larger batches compress better?</summary><div class="answer"><p>Compression works on the whole batch, and more records give more repeated content to remove.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="01-the-log.html">← 01 The log</a>
+    <a class="btn primary" href="03-consumers.html">03 Consumers →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- batching demo ----------
+(function () {
+  const REC = 200;
+  const rate = document.getElementById('bd-rate');
+  const linger = document.getElementById('bd-linger');
+  const size = document.getElementById('bd-size');
+  const fill = document.getElementById('bd-fill');
+  const label = document.getElementById('bd-label');
+  const out = {
+    recs: document.getElementById('bd-recs'), reqs: document.getElementById('bd-reqs'),
+    wait: document.getElementById('bd-wait'), why: document.getElementById('bd-why'),
+  };
+  let timer = null;
+  const fmt = (n) => (Number.isInteger(n) ? n.toLocaleString("en-US") : n >= 100 ? Math.round(n).toLocaleString('en-US') : n >= 10 ? n.toFixed(1) : n.toFixed(2));
+
+  function compute() {
+    const r = Number(rate.value), l = Number(linger.value), b = Number(size.value);
+    const fillMs = (b / (r * REC)) * 1000;       // time for the stream to fill one batch
+    const gapMs = 1000 / r;                      // time between two records
+    let waitMs, records, reason, share;
+    if (fillMs <= l) { waitMs = fillMs; records = b / REC; reason = 'batch is full'; share = 1; }
+    else if (l === 0 || l < gapMs) { waitMs = l; records = 1; reason = l === 0 ? 'no waiting' : 'linger.ms ends'; share = REC / b; }
+    else { waitMs = l; records = Math.max(1, (l / 1000) * r); reason = 'linger.ms ends'; share = Math.min(1, (records * REC) / b); }
+    return { waitMs, records, reason, share, batches: r / records };
+  }
+
+  function play() {
+    clearTimeout(timer);
+    const c = compute();
+    out.recs.textContent = fmt(c.records);
+    out.reqs.textContent = fmt(c.batches);
+    out.wait.textContent = fmt(c.waitMs) + ' ms';
+    out.why.textContent = c.reason;
+    const pct = Math.max(2, c.share * 100);
+    if (KB.reducedMotion) {
+      fill.style.transition = 'none'; fill.style.width = pct + '%';
+      label.textContent = Math.round(c.share * 100) + '% full when sent';
+      return;
+    }
+    const cycle = () => {
+      fill.style.transition = 'none'; fill.style.width = '0%';
+      label.textContent = 'filling…';
+      fill.getBoundingClientRect();
+      fill.style.transition = 'width 1.4s linear'; fill.style.width = pct + '%';
+      timer = setTimeout(() => {
+        label.textContent = 'sent: ' + Math.round(c.share * 100) + '% full (' + c.reason + ')';
+        timer = setTimeout(cycle, 900);
+      }, 1400);
+    };
+    cycle();
+  }
+  [rate, linger, size].forEach((el) => el.addEventListener('change', play));
+  play();
+})();
+
+// ---------- acks demo ----------
+(function () {
+  const nodes = [...document.querySelectorAll('#ad-nodes .node')];
+  const out = document.getElementById('ad-out');
+  const buttons = [...document.querySelectorAll('[data-acks]')];
+  let acks = 'all';
+  let timers = [];
+
+  const names = ['broker 1 · leader', 'broker 2 · follower', 'broker 3 · follower'];
+  function reset() {
+    timers.forEach(clearTimeout); timers = [];
+    nodes.forEach((n, i) => {
+      n.className = 'node' + (i === 0 ? ' leader' : '');
+      n.innerHTML = '<div class="node-name">' + names[i] + '</div>';
+    });
+  }
+  function put(i, text, fresh) {
+    const c = document.createElement('div');
+    c.className = 'cell' + (fresh ? ' new' : '');
+    c.textContent = text;
+    nodes[i].appendChild(c);
+  }
+  function at(step, fn) { timers.push(setTimeout(fn, KB.reducedMotion ? 0 : step * 1100)); }
+
+  function run() {
+    reset();
+    const lines = [];
+    const say = (t) => { lines.push(t); out.innerHTML = lines.join('\n'); };
+    out.textContent = '';
+    if (acks === 'all') {
+      at(0, () => { put(0, 'A', true); say('1. The leader writes A to its log. It does not answer yet.'); });
+      at(1, () => { put(1, 'A', true); put(2, 'A', true); say('2. Both followers copy A.'); });
+      at(2, () => say('3. The leader answers "success". The producer now knows A is safe.'));
+      at(3, () => { nodes[0].classList.add('dead'); nodes[0].classList.remove('leader'); nodes[1].classList.add('leader'); nodes[1].querySelector('.node-name').textContent = 'broker 2 · new leader'; say('4. The leader stops. Broker 2 becomes the leader. It has A.'); });
+      at(4, () => say('<b>Result: nothing is lost.</b> If the leader had stopped before step 3, the producer would have got no answer and sent A again to the new leader.'));
+    } else if (acks === '1') {
+      at(0, () => { put(0, 'A', true); say('1. The leader writes A to its log.'); });
+      at(1, () => say('2. The leader answers "success" at once. The followers have not copied A yet.'));
+      at(2, () => { nodes[0].classList.add('dead'); nodes[0].classList.remove('leader'); nodes[1].classList.add('leader'); nodes[1].querySelector('.node-name').textContent = 'broker 2 · new leader'; say('3. The leader stops. Broker 2 becomes the leader. It never received A.'); });
+      at(3, () => say('<span class="warn">Result: A is lost, and the producer believes it was written.</span>'));
+    } else {
+      at(0, () => say('1. The producer sends A and does not wait for any answer.'));
+      at(1, () => { nodes[0].classList.add('dead'); nodes[0].classList.remove('leader'); nodes[1].classList.add('leader'); nodes[1].querySelector('.node-name').textContent = 'broker 2 · new leader'; say('2. The leader stops before A arrives.'); });
+      at(2, () => say('<span class="warn">Result: A is lost. There was no answer to miss, so the producer cannot know and does not retry.</span>'));
+    }
+  }
+  buttons.forEach((b) => b.addEventListener('click', () => {
+    acks = b.dataset.acks;
+    buttons.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    reset(); out.textContent = 'acks=' + acks + '. Press the button.';
+  }));
+  document.getElementById('ad-run').addEventListener('click', run);
+})();
+
+// ---------- idempotence demo ----------
+(function () {
+  const log = document.getElementById('id-log');
+  const out = document.getElementById('id-out');
+  const toggles = [...document.querySelectorAll('[data-idem]')];
+  let on = true;
+  let timers = [];
+
+  function reset() { timers.forEach(clearTimeout); timers = []; log.innerHTML = ''; }
+  function put(text, cls) {
+    const c = document.createElement('div');
+    c.className = 'cell ' + (cls || 'new');
+    c.textContent = text;
+    log.appendChild(c);
+    return c;
+  }
+  function at(step, fn) { timers.push(setTimeout(fn, KB.reducedMotion ? 0 : step * 1200)); }
+
+  function run(scn) {
+    reset();
+    const lines = [];
+    const say = (t) => { lines.push(t); out.innerHTML = lines.join('\n'); };
+    out.textContent = '';
+    if (scn === 'lostack') {
+      at(0, () => { put(on ? 'A seq 0' : 'A'); say('1. The broker writes A. Its answer is lost on the network.'); });
+      at(1, () => say('2. The producer gets no answer, so it sends A again.'));
+      if (on) at(2, () => say('3. The broker sees producer id 16, sequence 0 again. It has that already. It answers "success" and writes nothing.\n<b>Result: one A in the log.</b>'));
+      else at(2, () => { put('A', 'new'); say('3. The broker has no way to know this is a repeat. It writes A again.\n<span class="warn">Result: A is in the log twice.</span>'); });
+    } else {
+      at(0, () => say('1. The producer sends batch A and batch B, one after the other, without waiting.'));
+      if (on) {
+        at(1, () => say('2. A fails on the network. B arrives with sequence 1, but the broker expects sequence 0. It rejects B.'));
+        at(2, () => { put('A seq 0'); say('3. The producer sends A again. The broker writes it.'); });
+        at(3, () => { put('B seq 1'); say('4. The producer sends B again. The broker writes it.\n<b>Result: A, then B. The order is kept.</b>'); });
+      } else {
+        at(1, () => { put('B'); say('2. A fails on the network. B arrives and the broker writes it.'); });
+        at(2, () => { put('A'); say('3. The producer sends A again. The broker writes it after B.\n<span class="warn">Result: B, then A. The order is wrong.</span>'); });
+      }
+    }
+  }
+  toggles.forEach((b) => b.addEventListener('click', () => {
+    on = b.dataset.idem === 'on';
+    toggles.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    reset(); out.textContent = 'enable.idempotence=' + on + '. Choose a scenario.';
+  }));
+  document.querySelectorAll('[data-scn]').forEach((b) => b.addEventListener('click', () => run(b.dataset.scn)));
+})();
+</script>
+<script src="extras/02.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

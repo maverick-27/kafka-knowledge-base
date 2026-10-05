@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Capstone project · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+<style>
+  .arch { display: grid; gap: .6rem; margin: 1rem 0; }
+  .arch .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: stretch; }
+  .arch .arrow { align-self: center; color: var(--muted); font: 600 1rem var(--mono); flex: 0 0 auto; }
+  .arch .stage { flex: 1 1 9rem; border: 1px solid var(--line); border-radius: 10px; padding: .7rem .8rem; background: var(--bg); font-size: .9rem; min-width: 0; }
+  .arch .stage b { display: block; font: 600 .85rem var(--mono); color: var(--primary); margin-bottom: .25rem; }
+  .arch .label { font: 500 .8rem var(--mono); color: var(--muted); }
+  .days .day label.rubric { padding: .3rem 0; font-size: .92rem; }
+  .days .day p { color: var(--ink); }
+  .bar { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+  .bar progress { flex: 1 1 12rem; height: 1.1rem; accent-color: var(--read); }
+  .table-wrap td, .table-wrap th { vertical-align: top; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ capstone</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="hero">
+  <div class="eyebrow">Kafka 4.3 · 4 to 8 weeks</div>
+  <h1>Capstone: order-to-settlement</h1>
+  <p class="lede">Build one small real system on the lab cluster and keep it running. You will break it on purpose, fix it, and collect stories you can tell in an interview.</p>
+</div>
+
+<div class="wide">
+
+<div class="note">
+  <p><strong>Status of the starter files.</strong> The folder <code>capstone/</code> holds a setup script, a database schema, a connector config and the acceptance tests. None of it has been run end to end. The script passed a syntax check only. The tables <code>orders</code> and <code>outbox</code> and the connector settings are as run in the cdc lab. Fix what you find and write it down: that is part of the exercise.</p>
+</div>
+
+<h2>Why this project</h2>
+<p>Reading explains how Kafka works. It does not give you the memory of a system that went wrong. A staff-level interview asks "tell me about a time". You need your own answers.</p>
+<ul>
+  <li>One system forces every module to meet: producers, consumers, transactions, Kafka Streams, the ecosystem, operations, monitoring.</li>
+  <li>A system that runs for weeks fails in ways a one-hour lab does not: a slot that grows, an alert that cries wolf, a restart at a bad moment.</li>
+  <li>Each week ends with a written note. By week 8 you hold about eight stories in a fixed shape.</li>
+</ul>
+
+<h2>Architecture</h2>
+<p>The order service never talks to Kafka. It writes to PostgreSQL. A connector reads the database log and publishes. Two readers consume the topic.</p>
+<div class="arch" role="group" aria-label="Architecture of the capstone system">
+  <div class="row">
+    <div class="stage"><b>1 Order service</b>Your code. Writes an order and an outbox row in one transaction.</div>
+    <span class="arrow" aria-hidden="true">&rarr;</span>
+    <div class="stage"><b>2 PostgreSQL <code>pg</code></b>Tables <code>orders</code>, <code>outbox</code>, <code>processed_events</code>.</div>
+    <span class="arrow" aria-hidden="true">&rarr;</span>
+    <div class="stage"><b>3 Debezium connector</b>Service <code>cdc-connect</code>, port 8087. Reads the outbox rows from the database log.</div>
+    <span class="arrow" aria-hidden="true">&rarr;</span>
+    <div class="stage"><b>4 Topic <code>order-events</code></b>Key is the order id. 3 copies, minimum 2.</div>
+  </div>
+  <div class="label">Two readers of the topic:</div>
+  <div class="row">
+    <div class="stage"><b>5a Consumer</b>Skips repeats using <code>processed_events</code>. Bad records go to <code>order-events-dlq</code> and raise an alert.</div>
+    <div class="stage"><b>5b Streams job</b>Daily total for each merchant. Exactly-once, named operators, durable state directory.</div>
+    <div class="stage"><b>6 Monitoring</b>Prometheus on 9095, Grafana on 3005, plus a lag check from the command line.</div>
+    <div class="stage"><b>7 Drills</b>One failure each week, from <a href="drills.html">drills.html</a>.</div>
+  </div>
+</div>
+<p class="figcap">Schema registry (port 8086) holds the contract for the event. With the connector settings from the lab, the registry does not check records on the wire. See week 5.</p>
+
+<h2>Requirements and acceptance tests</h2>
+<p>Each requirement has a test. The full commands and what a pass looks like are in <code>capstone/acceptance-tests.md</code>. A requirement is done only when its test passes and you wrote down what you saw.</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>#</th><th>Requirement</th><th>Acceptance test</th></tr></thead>
+    <tbody>
+      <tr><td>R1</td><td>Topic <code>order-events</code>: key is the order id, 3 copies, <code>min.insync.replicas</code> 2.</td><td>Describe the topic and read the settings. Stop two brokers and send with <code>acks=all</code>: the send fails.</td></tr>
+      <tr><td>R2</td><td>The service saves an order and its event in one database transaction.</td><td>Force an error before commit: neither row exists.</td></tr>
+      <tr><td>R3</td><td>Events reach Kafka only through the outbox and the connector.</td><td>Search the service code for a Kafka client: none. Stop the connector, insert three orders, restart: all three arrive.</td></tr>
+      <tr><td>R4</td><td>A registered schema with a compatibility mode.</td><td>Ask the registry about a change that removes a required field: it answers not compatible.</td></tr>
+      <tr><td>R5</td><td>The consumer is safe to repeat.</td><td>Reset the group to the start and replay: row counts in <code>processed_events</code> and your totals do not change.</td></tr>
+      <tr><td>R6</td><td>Bad records go to <code>order-events-dlq</code> and raise an alert.</td><td>Send an unparseable record: it appears on the dead-letter topic, the consumer keeps going, the alert fires.</td></tr>
+      <tr><td>R7</td><td>Daily total for each merchant, correct after a crash.</td><td>Kill the job mid-stream and restart: totals equal your hand-computed sums.</td></tr>
+      <tr><td>R8</td><td>Every stateful operator and repartition step has a name. State is on a durable disk. <code>exactly_once_v2</code> is on.</td><td>List the internal topics: all names are yours. Delete the state directory: totals come back from the changelog.</td></tr>
+      <tr><td>R9</td><td>Monitoring from the monitoring profile and a lag check from the command line.</td><td>The rules show on port 9095. <code>kafka-consumer-groups.sh --describe</code> shows lag that rises when you stop the consumer.</td></tr>
+      <tr><td>R10</td><td>A written throughput limit.</td><td>One page that names the highest rate with flat lag and the part that limited it.</td></tr>
+      <tr><td>R11</td><td>One failure drill every week of week 8, and ideally every week from week 3.</td><td>A story for each drill.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Design choices you must make</h2>
+<ul>
+  <li><strong>Merchant in the payload.</strong> The <code>orders</code> table from the lab has no merchant column. Put the merchant in the outbox payload, or add a column and say so in your notes.</li>
+  <li><strong>Event id.</strong> The outbox <code>id</code> defaults to a generated value. Insert it yourself and copy it into the payload as <code>eventId</code>. The consumer then does not depend on any header the connector may add.</li>
+  <li><strong>Topic name from the connector.</strong> The connector decides which topic it writes to. <span class="tag-unverified">unverified</span> No module shows the default name or how to change it. Watch which topic appears in week 2, then make it match <code>order-events</code>.</li>
+  <li><strong>Language.</strong> Use any language you know that has a Kafka client. The plan does not depend on it.</li>
+</ul>
+
+<h2>The 8-week plan</h2>
+<p>Four weeks is the minimum: do weeks 1 to 4 and 8. Eight weeks is better. Tick items as you finish them. Your ticks are saved in this browser.</p>
+
+<div class="note" aria-live="polite">
+  <div class="bar"><strong>Progress</strong>
+    <progress id="prog" max="1" value="0" aria-label="Checklist progress"></progress>
+    <span class="readout" id="prog-text" style="margin:0;padding:.3rem .6rem">0 of 0</span>
+    <button class="btn" type="button" id="reset">Clear ticks</button>
+  </div>
+</div>
+
+<div class="days">
+<div class="day">
+<div class="when">Week 1</div>
+<h3>Environment and topics</h3>
+<p><strong>Deliverables</strong></p>
+<label class="rubric"><input type="checkbox" data-ck id="ck1"><span>Cluster, schema registry, monitoring profile and cdc profile all start.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck2"><span><code>setup.sh</code> run twice with no error.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck3"><span>Acceptance tests A1 to A3 pass.</span></label>
+<p><strong>Measure.</strong> Time for the cluster to be ready from a cold start. How many seconds a broker restart takes.</p>
+<p><strong>Write down.</strong> A one-page diagram in your own words. Why 3 copies and a minimum of 2 (module 04).</p>
+</div>
+<div class="day">
+<div class="when">Week 2</div>
+<h3>Outbox and capture</h3>
+<p><strong>Deliverables</strong></p>
+<label class="rubric"><input type="checkbox" data-ck id="ck4"><span><code>schema.sql</code> loaded. The order service writes an order and an outbox row in one transaction.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck5"><span>Connector registered on port 8087 and running.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck6"><span>Events reach <code>order-events</code> with the order id as key. Tests B1 to B4 pass.</span></label>
+<p><strong>Measure.</strong> Delay between the database commit and the record on the topic. Size of the replication slot while the connector is stopped.</p>
+<p><strong>Write down.</strong> The real topic name and key the connector produced. Compare them with what you wanted, and write down the fix.</p>
+</div>
+<div class="day">
+<div class="when">Week 3</div>
+<h3>Consumer safe to repeat</h3>
+<p><strong>Deliverables</strong></p>
+<label class="rubric"><input type="checkbox" data-ck id="ck7"><span>Consumer inserts the event id into <code>processed_events</code> in the same database transaction as its effect.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck8"><span>Bad records go to <code>order-events-dlq</code> with the reason.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck9"><span>Tests C1 to C3 pass.</span></label>
+<p><strong>Measure.</strong> Events per second the consumer handles. How many repeats the table skipped after a restart.</p>
+<p><strong>Write down.</strong> Why commit order matters: effect and event id first, offset after (module 03).</p>
+</div>
+<div class="day">
+<div class="when">Week 4</div>
+<h3>Streams job</h3>
+<p><strong>Deliverables</strong></p>
+<label class="rubric"><input type="checkbox" data-ck id="ck10"><span>Daily total per merchant, with a name on every stateful operator and repartition step.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck11"><span><code>state.dir</code> on a durable disk. <code>processing.guarantee=exactly_once_v2</code>.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck12"><span>Tests D1 to D4 pass.</span></label>
+<p><strong>Measure.</strong> Time to restart with state kept, and with state deleted. Size of the changelog topic.</p>
+<p><strong>Write down.</strong> What happens to a late order that belongs to yesterday. Decide, then write the rule.</p>
+</div>
+<div class="day">
+<div class="when">Week 5</div>
+<h3>Schemas and a breaking-change rehearsal</h3>
+<p><strong>Deliverables</strong></p>
+<label class="rubric"><input type="checkbox" data-ck id="ck13"><span>Schema for the event registered, with a compatibility mode set.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck14"><span>Rehearsal: make a breaking change, see the registry refuse it, then ship it safely as a new field with a default.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck15"><span>Test A4 passes.</span></label>
+<p><strong>Measure.</strong> Which changes the registry accepted and refused under each mode.</p>
+<p><strong>Write down.</strong> Who breaks first when a field changes: the consumer, the Streams job or the connector? Write the order you saw.</p>
+</div>
+<div class="day">
+<div class="when">Week 6</div>
+<h3>Monitoring and alerts</h3>
+<p><strong>Deliverables</strong></p>
+<label class="rubric"><input type="checkbox" data-ck id="ck16"><span>A lag check from the command line, saved as a script.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck17"><span>Alerts for dead-letter growth and lag, on top of the three module 12 rules.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck18"><span>Tests E1 to E3 pass.</span></label>
+<p><strong>Measure.</strong> How long each alert takes to fire. How many false alerts you get in one week.</p>
+<p><strong>Write down.</strong> For each alert: who acts, what they do first, and how they know it is fixed.</p>
+</div>
+<div class="day">
+<div class="when">Week 7</div>
+<h3>Load test and the written limit</h3>
+<p><strong>Deliverables</strong></p>
+<label class="rubric"><input type="checkbox" data-ck id="ck19"><span>Run the performance tool against a copy of the topic, with growing rates.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck20"><span>Find the rate at which lag stops being flat.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck21"><span>Test F1 passes.</span></label>
+<p><strong>Measure.</strong> Records per second and lag at each step. Which part limited you: producer, broker disk, consumer or database.</p>
+<p><strong>Write down.</strong> A one-page limit statement: "This system holds X orders per second because Y." Say how you would raise it.</p>
+</div>
+<div class="day">
+<div class="when">Week 8</div>
+<h3>Failure-drill week and the stories</h3>
+<p><strong>Deliverables</strong></p>
+<label class="rubric"><input type="checkbox" data-ck id="ck22"><span>One drill from <a href="drills.html">drills.html</a> on each of four days, run against the live system.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck23"><span>Re-run every acceptance test.</span></label>
+<label class="rubric"><input type="checkbox" data-ck id="ck24"><span>Write all five-part stories.</span></label>
+<p><strong>Measure.</strong> Time to detect and time to recover for each drill.</p>
+<p><strong>Write down.</strong> Finish the stories table below. Speak each one aloud in under two minutes.</p>
+</div>
+</div>
+
+<p>Use the commands in the modules for the work. Setup, <code>k</code> and <code>B</code> are on the <a href="cheat-sheet.html">cheat sheet</a>.</p>
+
+<h2>Stories to collect</h2>
+<p>Every story has five parts. Fill one row for each week, and for each drill. The fourth part, what you got wrong, is the one interviewers trust most.</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Part</th><th>Question to answer</th><th>Example from week 2</th></tr></thead>
+    <tbody>
+      <tr><td>1 Situation</td><td>What were you building or running, and what mattered?</td><td>Events must never be lost when the service crashes.</td></tr>
+      <tr><td>2 What I saw</td><td>The facts: output, numbers, symptoms.</td><td>The record landed on a topic with a different name than I expected.</td></tr>
+      <tr><td>3 What I decided</td><td>The choice and the reason, with the options you rejected.</td><td>I changed the connector routing instead of the consumer.</td></tr>
+      <tr><td>4 What I got wrong</td><td>A wrong guess, a missed check, a mistake.</td><td>I assumed the key was the order id and did not read it back.</td></tr>
+      <tr><td>5 What I changed</td><td>The fix, and the test or alert that now guards it.</td><td>Added acceptance test B2 that reads the key.</td></tr>
+    </tbody>
+  </table>
+</div>
+<details class="hint"><summary>Seed ideas for stories</summary>
+  <ul>
+    <li>A consumer that processed an event twice after a restart.</li>
+    <li>The slot that grew while the connector was stopped.</li>
+    <li>A Streams restart that was slow because the state directory was gone.</li>
+    <li>A schema change that one reader could not handle.</li>
+    <li>An alert that fired at the wrong time, or not at all.</li>
+    <li>The load test: what actually limited you.</li>
+  </ul>
+</details>
+
+<h2>What this will not teach you</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Gap</th><th>Why it matters</th><th>What to do about it</th></tr></thead>
+    <tbody>
+      <tr><td>Real traffic</td><td>Your load is invented. Real data is uneven: hot keys, bursts, odd sizes.</td><td>Make the load test skewed: send most orders for one merchant and see one partition lag. Say plainly in an interview that the traffic was synthetic.</td></tr>
+      <tr><td>Many teams</td><td>You own every part. In a company, a schema change needs agreement across teams.</td><td>Write a one-page change process for the event schema: who reviews, how long notice is, how to retire a field. Ask a friend to play the consumer team and object.</td></tr>
+      <tr><td>Cloud scale</td><td>Three small containers on one machine show no network limits, no disk limits and no cost trade-offs.</td><td>Read the tiered storage and multi-cluster modules and the numbers in them. Estimate, on paper, the disk and network for 100 times your load.</td></tr>
+      <tr><td>On-call pressure</td><td>You fail on purpose, calmly, with the runbook open. A night page is different.</td><td>Ask someone to start a drill without telling you which one. Set a timer. Practise saying your first three checks aloud.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note">
+  <p><strong>Related pages.</strong> <a href="drills.html">Failure drills</a>, <a href="cheat-sheet.html">Cheat sheet</a>, <a href="glossary.html">Glossary</a>. Starter files: <code>capstone/README.md</code>, <code>setup.sh</code>, <code>schema.sql</code>, <code>connector-outbox.json</code>, <code>acceptance-tests.md</code>.</p>
+</div>
+
+</div>
+</main>
+<script src="assets/kb.js"></script>
+<script>
+(function () {
+  var KEY = 'kb-capstone';
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('input[data-ck]'));
+  var bar = document.getElementById('prog');
+  var txt = document.getElementById('prog-text');
+  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
+  function save(s) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
+  function show() {
+    var done = boxes.filter(function (b) { return b.checked; }).length;
+    bar.max = boxes.length; bar.value = done;
+    txt.textContent = done + ' of ' + boxes.length;
+  }
+  var state = load();
+  boxes.forEach(function (b) {
+    b.checked = !!state[b.id];
+    b.addEventListener('change', function () {
+      var s = load(); if (b.checked) s[b.id] = 1; else delete s[b.id];
+      save(s); show();
+    });
+  });
+  document.getElementById('reset').addEventListener('click', function () {
+    boxes.forEach(function (b) { b.checked = false; });
+    save({}); show();
+  });
+  show();
+})();
+</script>
+</body>
+</html>

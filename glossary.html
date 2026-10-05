@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glossary · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ glossary</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+<main>
+<div class="hero"><div class="eyebrow">77 terms · each with the module that explains it</div><h1>Glossary</h1><p class="lede">Every term the ten modules define, in one place. The number on the right is the module that explains the term in full.</p></div>
+<div class="wide"><div class="controls"><label for="gf">Filter</label><input id="gf" type="text" placeholder="type part of a term" autocomplete="off"></div>
+<div class="table-wrap"><table><thead><tr><th>Term</th><th>Meaning</th><th>Module</th></tr></thead><tbody id="gb">
+<tr id="g-0"><td><strong>acks</strong></td><td>The producer setting that says how many brokers must have a record before the leader answers: 0, 1 or all.</td><td><a href="modules/02-producers.html">02</a></td></tr>
+<tr id="g-1"><td><strong>Active controller</strong></td><td>The one controller that is currently the leader of the quorum and makes all metadata decisions.</td><td><a href="modules/05-kraft.html">05</a></td></tr>
+<tr id="g-2"><td><strong>Active segment</strong></td><td>The newest segment of a partition, and the only one being written.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-3"><td><strong>At-least-once</strong></td><td>A delivery guarantee: no record is lost, but a record can be processed more than once. Process first, then commit.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-4"><td><strong>At-most-once</strong></td><td>A delivery guarantee: no record is processed twice, but a record can be lost. Commit first, then process.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-5"><td><strong>Batch</strong></td><td>A group of records for one partition that the producer sends, and the broker stores, as one unit.</td><td><a href="modules/02-producers.html">02</a></td></tr>
+<tr id="g-6"><td><strong>Broker</strong></td><td>One Kafka server that stores partitions and serves clients.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-7"><td><strong>Change data capture</strong></td><td>Reading a database&#x27;s own log of changes and publishing each change as a record.</td><td><a href="modules/08-ecosystem.html">08</a></td></tr>
+<tr id="g-8"><td><strong>Changelog topic</strong></td><td>A compacted internal topic that holds every change to one Kafka Streams state store.</td><td><a href="modules/07-kafka-streams.html">07</a></td></tr>
+<tr id="g-9"><td><strong>Co-partitioning</strong></td><td>Two topics with the same partition count and the same partitioning by key, as a join needs.</td><td><a href="modules/07-kafka-streams.html">07</a></td></tr>
+<tr id="g-10"><td><strong>Combined mode</strong></td><td>One process that is both broker and controller. For development only.</td><td><a href="modules/05-kraft.html">05</a></td></tr>
+<tr id="g-11"><td><strong>Committed offset</strong></td><td>A consumer group&#x27;s saved position for a partition: the next offset it will read.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-12"><td><strong>Committed record</strong></td><td>A record that every in-sync replica has. Only committed records are shown to consumers.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-13"><td><strong>Compaction</strong></td><td>A cleanup policy that keeps at least the newest record for each key and removes older ones.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-14"><td><strong>Connector</strong></td><td>A ready-made component for Kafka Connect that copies data from a system into Kafka (source) or out of it (sink).</td><td><a href="modules/08-ecosystem.html">08</a></td></tr>
+<tr id="g-15"><td><strong>Consumer</strong></td><td>The client library that reads records.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-16"><td><strong>Consumer group</strong></td><td>A set of consumers with the same group id that share the partitions of a topic, one owner for each partition.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-17"><td><strong>Controller</strong></td><td>A server that votes in the metadata quorum and stores the metadata log.</td><td><a href="modules/05-kraft.html">05</a></td></tr>
+<tr id="g-18"><td><strong>Converter</strong></td><td>The part of Kafka Connect that turns records into bytes and back.</td><td><a href="modules/08-ecosystem.html">08</a></td></tr>
+<tr id="g-19"><td><strong>Coordinator</strong></td><td>A broker that manages one consumer group, one transactional id, or one share group.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-20"><td><strong>Dead-letter topic</strong></td><td>A topic that receives records that could not be processed, with the reason.</td><td><a href="modules/08-ecosystem.html">08</a></td></tr>
+<tr id="g-21"><td><strong>Eligible leader replicas</strong></td><td>Replicas outside the in-sync set that are known to hold every committed record and can be elected safely. Shown as Elr.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-22"><td><strong>Epoch</strong></td><td>A counter that goes up at each change of leader or producer session, so that messages from an old one can be refused.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-23"><td><strong>Exactly-once</strong></td><td>For a read-process-write application in Kafka: each input affects the outputs and the committed offset exactly one time.</td><td><a href="modules/06-transactions.html">06</a></td></tr>
+<tr id="g-24"><td><strong>Fenced</strong></td><td>Refused by the cluster. A fenced broker leads nothing; a fenced producer cannot write.</td><td><a href="modules/05-kraft.html">05</a></td></tr>
+<tr id="g-25"><td><strong>Follower</strong></td><td>A replica that copies the leader.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-26"><td><strong>High watermark</strong></td><td>The lowest log end offset among the in-sync replicas. Records below it are committed.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-27"><td><strong>Idempotence</strong></td><td>Producer and broker count records with sequence numbers so that a retry cannot create a duplicate.</td><td><a href="modules/02-producers.html">02</a></td></tr>
+<tr id="g-28"><td><strong>In-sync replicas</strong></td><td>The leader plus the followers that have caught up with it within the allowed time. Written ISR.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-29"><td><strong>Isolation level</strong></td><td>A consumer setting: read_uncommitted shows all records; read_committed hides records of open and aborted transactions.</td><td><a href="modules/06-transactions.html">06</a></td></tr>
+<tr id="g-30"><td><strong>KRaft</strong></td><td>Kafka&#x27;s own way to store cluster metadata, with a quorum of controllers and the Raft method. It replaced ZooKeeper in Kafka 4.0.</td><td><a href="modules/05-kraft.html">05</a></td></tr>
+<tr id="g-31"><td><strong>Lag</strong></td><td>The log end offset minus a group&#x27;s committed offset: the records not yet processed.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-32"><td><strong>Last stable offset</strong></td><td>The offset of the first record of the oldest open transaction. Committed readers read only below it.</td><td><a href="modules/06-transactions.html">06</a></td></tr>
+<tr id="g-33"><td><strong>Leader</strong></td><td>The replica of a partition that accepts writes and normally serves reads.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-34"><td><strong>Leader epoch</strong></td><td>The number of the current leadership of one partition. It rises by one at each leader change.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-35"><td><strong>Listener</strong></td><td>A network port of a broker with its own security settings.</td><td><a href="modules/09-operations.html">09</a></td></tr>
+<tr id="g-36"><td><strong>Log</strong></td><td>An ordered list of records that only grows at the end. Each partition is one log.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-37"><td><strong>Log end offset</strong></td><td>The offset that the next record of a partition will get.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-38"><td><strong>Log start offset</strong></td><td>The oldest offset of a partition that still exists.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-39"><td><strong>Marker</strong></td><td>A control record that says a transaction was committed or aborted. It uses one offset.</td><td><a href="modules/06-transactions.html">06</a></td></tr>
+<tr id="g-40"><td><strong>Metadata log</strong></td><td>The single-partition log, __cluster_metadata, that holds every change to the cluster&#x27;s metadata.</td><td><a href="modules/05-kraft.html">05</a></td></tr>
+<tr id="g-41"><td><strong>min.insync.replicas</strong></td><td>The smallest in-sync set for which the leader accepts writes with acks=all.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-42"><td><strong>MirrorMaker 2</strong></td><td>Kafka Connect connectors that copy topics, and translate consumer offsets, from one cluster to another.</td><td><a href="modules/10-multi-cluster.html">10</a></td></tr>
+<tr id="g-43"><td><strong>Offset</strong></td><td>The position of a record in its partition. It never changes and is never reused.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-44"><td><strong>Outbox pattern</strong></td><td>Writing an event to a table in the same database transaction as the business change, and publishing it from there.</td><td><a href="modules/08-ecosystem.html">08</a></td></tr>
+<tr id="g-45"><td><strong>Page cache</strong></td><td>The operating system&#x27;s memory for file data. Kafka relies on it to serve recent records.</td><td><a href="modules/09-operations.html">09</a></td></tr>
+<tr id="g-46"><td><strong>Partition</strong></td><td>One of the logs that a topic is split into.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-47"><td><strong>Preferred leader</strong></td><td>The first broker in a partition&#x27;s replica list.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-48"><td><strong>Producer</strong></td><td>The client library that writes records.</td><td><a href="modules/02-producers.html">02</a></td></tr>
+<tr id="g-49"><td><strong>Quorum</strong></td><td>The voting group of controllers. A majority must run for metadata to change.</td><td><a href="modules/05-kraft.html">05</a></td></tr>
+<tr id="g-50"><td><strong>Quota</strong></td><td>A limit on what one client or user may send, fetch or use of broker time.</td><td><a href="modules/09-operations.html">09</a></td></tr>
+<tr id="g-51"><td><strong>Rebalance</strong></td><td>The moment partitions change owner inside a consumer group.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-52"><td><strong>Record</strong></td><td>One message: a key, a value, a timestamp and optional headers.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-53"><td><strong>Recovery point objective</strong></td><td>How much recent data may be lost in a disaster, as a time.</td><td><a href="modules/10-multi-cluster.html">10</a></td></tr>
+<tr id="g-54"><td><strong>Recovery time objective</strong></td><td>How long the service may be down in a disaster.</td><td><a href="modules/10-multi-cluster.html">10</a></td></tr>
+<tr id="g-55"><td><strong>Repartition topic</strong></td><td>An internal Kafka Streams topic that regroups records by a new key.</td><td><a href="modules/07-kafka-streams.html">07</a></td></tr>
+<tr id="g-56"><td><strong>Replica</strong></td><td>One copy of a partition on one broker.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-57"><td><strong>Replication factor</strong></td><td>The number of copies of each partition.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-58"><td><strong>Retention</strong></td><td>The rule that removes old data, by time or by size, in whole segments.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-59"><td><strong>Schema registry</strong></td><td>A separate service that stores the agreed shape of each topic&#x27;s records and checks changes for compatibility.</td><td><a href="modules/08-ecosystem.html">08</a></td></tr>
+<tr id="g-60"><td><strong>Segment</strong></td><td>One of the files that a partition&#x27;s log is cut into.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-61"><td><strong>Share group</strong></td><td>A group in which several members can read the same partition and acknowledge each record alone. Queue behaviour.</td><td><a href="modules/10-multi-cluster.html">10</a></td></tr>
+<tr id="g-62"><td><strong>Snapshot</strong></td><td>The full metadata state at one offset, so that older metadata records can be deleted.</td><td><a href="modules/05-kraft.html">05</a></td></tr>
+<tr id="g-63"><td><strong>Standby replica</strong></td><td>A warm copy of a Kafka Streams state store on another instance.</td><td><a href="modules/07-kafka-streams.html">07</a></td></tr>
+<tr id="g-64"><td><strong>State store</strong></td><td>Local storage, by default RocksDB, that a Kafka Streams step uses to remember things.</td><td><a href="modules/07-kafka-streams.html">07</a></td></tr>
+<tr id="g-65"><td><strong>Static membership</strong></td><td>A consumer with a fixed group.instance.id, so that a quick restart causes no rebalance.</td><td><a href="modules/03-consumers.html">03</a></td></tr>
+<tr id="g-66"><td><strong>Stretch cluster</strong></td><td>One cluster whose brokers and controllers are placed in several nearby sites.</td><td><a href="modules/10-multi-cluster.html">10</a></td></tr>
+<tr id="g-67"><td><strong>Task</strong></td><td>In Kafka Streams: processing for one sub-topology and one partition. In Kafka Connect: one unit of a connector&#x27;s copying work.</td><td><a href="modules/07-kafka-streams.html">07</a></td></tr>
+<tr id="g-68"><td><strong>Tiered storage</strong></td><td>Copying closed segments to cheaper remote storage and keeping only recent data on broker disks.</td><td><a href="modules/09-operations.html">09</a></td></tr>
+<tr id="g-69"><td><strong>Tombstone</strong></td><td>A record with a key and a null value. In a compacted topic it means &quot;delete this key&quot;.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-70"><td><strong>Topic</strong></td><td>A named stream of records, split into partitions.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+<tr id="g-71"><td><strong>Transaction</strong></td><td>Writes to several partitions, and offset commits, that take effect together or not at all.</td><td><a href="modules/06-transactions.html">06</a></td></tr>
+<tr id="g-72"><td><strong>Transactional id</strong></td><td>A stable name for a producer that lets Kafka recognise it after a restart and fence the old instance.</td><td><a href="modules/06-transactions.html">06</a></td></tr>
+<tr id="g-73"><td><strong>Truncation</strong></td><td>A replica cutting records from the end of its log to match the leader.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-74"><td><strong>Unclean leader election</strong></td><td>Electing a replica that was not in sync. It restores availability and loses records.</td><td><a href="modules/04-replication.html">04</a></td></tr>
+<tr id="g-75"><td><strong>Window</strong></td><td>A piece of a stream cut by time: tumbling, hopping or session.</td><td><a href="modules/07-kafka-streams.html">07</a></td></tr>
+<tr id="g-76"><td><strong>Zero-copy</strong></td><td>Sending file bytes straight to the network without passing them through the Kafka process.</td><td><a href="modules/01-the-log.html">01</a></td></tr>
+</tbody></table></div><p id="gn" class="figcap"></p></div>
+</main>
+<script src="assets/kb.js"></script>
+<script>
+(function(){var f=document.getElementById('gf'),rows=[].slice.call(document.querySelectorAll('#gb tr')),n=document.getElementById('gn');
+function run(){var q=f.value.trim().toLowerCase(),shown=0;rows.forEach(function(r){var ok=!q||r.textContent.toLowerCase().indexOf(q)!==-1;r.style.display=ok?'':'none';if(ok)shown++;});n.textContent=shown?shown+' of '+rows.length+' terms shown.':'No term matches. Clear the filter to see all '+rows.length+'.';}
+f.addEventListener('input',run);run();})();
+</script>
+</body>
+</html>

@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10 Multi-cluster and design · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .own-0 { background: var(--primary); border-color: var(--primary); color: var(--bg); }
+  .own-1 { background: var(--read); border-color: var(--read); color: var(--bg); }
+  .own-2 { background: var(--write); border-color: var(--write); color: var(--write-ink); }
+  .own-3 { background: #B46BD6; border-color: #B46BD6; color: #1B0B24; }
+  .cell.small { min-width: 44px; height: 38px; font-size: .78rem; }
+  .checks { display: grid; gap: .4rem; margin: 1rem 0; }
+  .checks label { display: flex; gap: .7rem; align-items: flex-start; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); cursor: pointer; min-height: 44px; }
+  .checks input { width: 20px; height: 20px; margin-top: .15rem; accent-color: var(--primary); flex: 0 0 auto; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 10 Multi-cluster and design</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 10 · Day 7 · Kafka 4.3</div>
+  <h1>Multi-cluster and design</h1>
+  <p class="lede">The last module is about boundaries: copying data between clusters and regions, using Kafka as a work queue with share groups, and knowing when a different tool is the better answer.</p>
+
+  <div class="lab-panel" id="sg-demo" style="margin:0">
+    <h3>Try it: one partition, several workers</h3>
+    <p class="hint">Send jobs to a topic with a single partition. Compare how a consumer group and a share group hand them out. The lab ran this with two real workers.</p>
+    <div class="controls">
+      <span id="sg-lbl">Group type</span>
+      <div class="seg" role="group" aria-labelledby="sg-lbl">
+        <button type="button" data-g="consumer" aria-pressed="false">Consumer group</button>
+        <button type="button" data-g="share" aria-pressed="true">Share group</button>
+      </div>
+      <label for="sg-n">Workers</label>
+      <select id="sg-n"><option>1</option><option selected>2</option><option>3</option><option>4</option></select>
+      <button class="btn primary" type="button" id="sg-send">Send 8 jobs</button>
+      <button class="btn" type="button" id="sg-fail">Worker 1 fails mid-job</button>
+    </div>
+    <div id="sg-lanes"></div>
+    <div class="readout" id="sg-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>One cluster in one place is the simple case. Three needs push beyond it.</p>
+  <ul>
+    <li><strong>Surviving the loss of a whole site.</strong> Replication inside a cluster (module 04) protects against a broker failure. It does not protect against the loss of the data centre or region that the cluster is in.</li>
+    <li><strong>Moving data between places.</strong> Applications in one region need data produced in another. Analytics needs a copy that heavy queries cannot disturb. A migration needs two clusters in step for a while.</li>
+    <li><strong>Work queues.</strong> A consumer group ties parallel work to the partition count and delivers in order. Some work, such as sending emails or resizing images, wants the opposite: many workers on any record, with each record acknowledged alone.</li>
+  </ul>
+  <p>Kafka's answers are <strong>MirrorMaker 2</strong>, which copies topics from one cluster to another; <strong>stretch clusters</strong>, where one cluster spans several sites; and <strong>share groups</strong>, a second kind of group that gives Kafka queue behaviour.</p>
+  <p>The module ends with the most senior skill: saying when Kafka is not the right tool.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> Copy between clusters when sites must fail independently, stretch one cluster when no record may be lost and the sites are close, use share groups when work is independent, and choose something simpler when you do not need a replayable log.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+
+    <h3>Two numbers for every disaster plan</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Number</th><th>Question it answers</th></tr></thead>
+        <tbody>
+          <tr><td>Recovery point objective</td><td>How much recent data may be lost? Measured in time: zero, seconds, minutes.</td></tr>
+          <tr><td>Recovery time objective</td><td>How long may the service be down? Measured in time: seconds, minutes, hours.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Every design below is a different trade between these two numbers, cost, and complexity.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="dr-demo">
+    <h3>Try it: three ways to use two or more sites</h3>
+    <div class="controls">
+      <span id="dr-lbl">Design</span>
+      <div class="seg" role="group" aria-labelledby="dr-lbl">
+        <button type="button" data-dr="ap" aria-pressed="true">Active and standby</button>
+        <button type="button" data-dr="aa" aria-pressed="false">Active and active</button>
+        <button type="button" data-dr="stretch" aria-pressed="false">Stretch cluster</button>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="dr-rpo">–</b><span>data that can be lost</span></div>
+      <div class="stat"><b id="dr-rto">–</b><span>time to recover</span></div>
+      <div class="stat"><b id="dr-cost">–</b><span>cost and complexity</span></div>
+    </div>
+    <div class="readout" id="dr-out" aria-live="polite"></div>
+  </div>
+
+  <div class="col">
+    <h3>A copy is not the original</h3>
+    <p>MirrorMaker 2 is a consumer on one cluster and a producer on the other. So the copy is a new topic with its own offsets. Offset 500 in the source is not offset 500 in the copy. This one fact causes most of the difficulty: a consumer that moves to the other cluster cannot reuse its committed offsets, so they must be translated.</p>
+
+    <h3>Queue or log?</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th></th><th>Consumer group</th><th>Share group</th></tr></thead>
+        <tbody>
+          <tr><td>A partition is read by</td><td>One member.</td><td>Any number of members.</td></tr>
+          <tr><td>Most useful workers</td><td>The partition count.</td><td>No such limit.</td></tr>
+          <tr><td>Order</td><td>Kept inside a partition.</td><td>Not guaranteed.</td></tr>
+          <tr><td>Progress is tracked as</td><td>One offset for each partition.</td><td>A state for each record: available, taken, done.</td></tr>
+          <tr><td>A record that fails</td><td>Blocks the partition until handled.</td><td>Is released and tried again, up to a limit, while other records continue.</td></tr>
+          <tr><td>Use for</td><td>Events where order and replay matter.</td><td>Independent jobs.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Both kinds of group can read the same topic at the same time. The data is still a log with retention; a share group only changes how it is handed out.</p>
+
+    <h3>Should this be Kafka at all?</h3>
+  </div>
+
+  <div class="lab-panel wide reveal" id="fit-demo">
+    <h3>Try it: does your use case fit?</h3>
+    <p class="hint">Tick what is true for the system you have in mind.</p>
+    <div class="checks" id="ft-checks">
+      <label><input type="checkbox" data-w="2"> Several independent applications need the same data.</label>
+      <label><input type="checkbox" data-w="2"> Consumers need to read old data again: after a bug, or when a new application starts.</label>
+      <label><input type="checkbox" data-w="2"> The volume is high: thousands of records each second or more.</label>
+      <label><input type="checkbox" data-w="1"> Records for one entity must be processed in order.</label>
+      <label><input type="checkbox" data-w="1"> You need to join or aggregate streams as they arrive.</label>
+      <label><input type="checkbox" data-w="-2"> A caller waits for an answer to each message.</label>
+      <label><input type="checkbox" data-w="-2"> Messages need priorities, or a delay for each message, or routing by content.</label>
+      <label><input type="checkbox" data-w="-2"> The volume is low and you already run a database that could hold a table of jobs.</label>
+      <label><input type="checkbox" data-w="-1"> Messages are large files.</label>
+      <label><input type="checkbox" data-w="-1"> Nobody in the team will own the operation of a cluster.</label>
+    </div>
+    <div class="readout" id="ft-out" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>MirrorMaker 2</h3>
+    <p>MirrorMaker 2 is a set of Kafka Connect connectors (module 08). The lab's Connect worker listed all three among its plug-ins.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Connector</th><th>Job</th></tr></thead>
+        <tbody>
+          <tr><td>Source connector</td><td>Copies records, and also creates the topics on the target with the same partition count and settings.</td></tr>
+          <tr><td>Checkpoint connector</td><td>Translates consumer group offsets from the source to the target.</td></tr>
+          <tr><td>Heartbeat connector</td><td>Writes a regular marker so that you can check that the link is alive and measure its delay.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ol class="steps">
+      <li class="on">You name each cluster with an <strong>alias</strong>, such as <code>main</code> and <code>dr</code>, and declare a flow: <code>main-&gt;dr</code>.</li>
+      <li class="on">By default the copy of a topic gets the source alias as a prefix: <code>orders</code> becomes <code>main.orders</code>. The prefix shows where data came from and stops a loop when two clusters copy to each other.</li>
+      <li class="on">A record keeps its key, value, headers, timestamp and partition number. It gets a new offset.</li>
+      <li class="on">The source connector writes pairs of matching offsets, source and target, to an <strong>offset-syncs</strong> topic from time to time.</li>
+      <li class="on">The checkpoint connector reads each group's committed offsets on the source, uses those pairs to compute a safe offset on the target, and writes it to a <strong>checkpoints</strong> topic. With <code>sync.group.offsets.enabled</code> it also commits it for the group on the target.</li>
+    </ol>
+    <p>Translation is deliberately cautious. In the lab, the group <code>g-new</code> was at offset 1261 on a source partition and was given 1112 on the copy. After a failover it would read 149 records again. It would not skip any. So a consumer that fails over must tolerate repeats.</p>
+    <p>The copy is <strong>asynchronous</strong>. A producer gets its answer from the source cluster before the record reaches the target. In the lab a new record reached the second cluster about 2 seconds later. Whatever is in flight when the source is lost, is lost.</p>
+
+    <h3>Stretch clusters</h3>
+    <p>A stretch cluster is one normal cluster whose brokers and controllers are placed in three sites. With <code>broker.rack</code> set, each partition has a replica in each site. With <code>acks=all</code> and a minimum of 2, a record is in two sites before it is acknowledged. Losing a site loses no committed record, and failover is the ordinary leader election from module 04. Clients do nothing.</p>
+    <p>The price is in the network. Every write waits for a round trip between sites, and the controllers need low delay to each other. This works between zones of one cloud region, a millisecond or two apart. It does not work between continents.</p>
+
+    <h3>Share groups</h3>
+    <ol class="steps">
+      <li class="on">A consumer joins a share group and is assigned partitions. Several members can have the same partition; in the lab both workers showed <code>jobs:0</code>.</li>
+      <li class="on">When a member fetches, the broker hands it some available records and marks them as <strong>acquired</strong> by that member, with a time limit: the lock, 30 seconds by default.</li>
+      <li class="on">The member processes each record and <strong>acknowledges</strong> it: accept (done), release (give it back for another try), or reject (give up on it).</li>
+      <li class="on">If the lock runs out with no acknowledgement, the record becomes available again and another member can take it.</li>
+      <li class="on">Each record has a delivery count. After 5 deliveries without success, the broker stops offering it.</li>
+      <li class="on">The broker keeps this per-record state in an internal topic, <code>__share_group_state</code>.</li>
+    </ol>
+    <p>Because records are handed out one batch at a time to whoever asks, order is not kept, and there is no per-partition offset for the application to commit. The group's position is a <strong>start offset</strong>, below which every record is finished.</p>
+    <p class="note">The lab cluster reports the feature <code>share.version</code> at level 1, so share groups are on. They are new in the 4.x line. Check the release notes for the status in the version you run, and whether your client library supports them. <span class="tag-unverified">unverified: I did not confirm the release in which they became production-ready</span></p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <h3>MirrorMaker 2</h3>
+    <p>The values in the "Lab" column are what the lab used and are verified to work. I could not check the defaults against the reference in this session, so that column is from memory. <span class="tag-unverified">unverified defaults</span></p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>MirrorMaker 2 config</th><th>Default, from memory</th><th>Lab</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>clusters</code></td><td>required</td><td><code>main, dr</code></td><td>The aliases of the clusters.</td></tr>
+        <tr><td><code>&lt;alias&gt;.bootstrap.servers</code></td><td>required</td><td>one for each alias</td><td>How to reach each cluster.</td></tr>
+        <tr><td><code>&lt;a&gt;-&gt;&lt;b&gt;.enabled</code></td><td><code>false</code></td><td><code>main-&gt;dr</code> on</td><td>Turns on one direction of copying.</td></tr>
+        <tr><td><code>&lt;a&gt;-&gt;&lt;b&gt;.topics</code></td><td>all topics</td><td><code>orders|payments|events</code></td><td>Which topics to copy, as a pattern. New matching topics are picked up.</td></tr>
+        <tr><td><code>groups</code></td><td>all groups</td><td><code>g-.*</code></td><td>Which consumer groups get translated offsets.</td></tr>
+        <tr><td><code>replication.factor</code></td><td>2</td><td>1</td><td>Copies of the mirrored topics on the target. The lab's second cluster has one broker. Use 3 in production.</td></tr>
+        <tr><td><code>sync.group.offsets.enabled</code></td><td><code>false</code></td><td><code>true</code></td><td>Commits translated offsets for groups on the target, for groups with no active member there.</td></tr>
+        <tr><td><code>emit.checkpoints.interval.seconds</code>, <code>sync.group.offsets.interval.seconds</code></td><td>60, 60</td><td>10, 10</td><td>How often offsets are translated and committed.</td></tr>
+        <tr><td><code>refresh.topics.interval.seconds</code>, <code>refresh.groups.interval.seconds</code></td><td>600, 600</td><td>10, 10</td><td>How often new topics, new partitions and new groups are looked for.</td></tr>
+        <tr><td><code>replication.policy.class</code></td><td>the default policy, which adds the alias prefix</td><td>default</td><td>How target topics are named. An identity policy keeps the same names; use it only for one-way copying.</td></tr>
+        <tr><td><code>sync.topic.configs.enabled</code></td><td><code>true</code></td><td>default</td><td>Copies topic settings to the target.</td></tr>
+        <tr><td><code>&lt;alias&gt;.consumer.isolation.level</code></td><td><code>read_uncommitted</code></td><td>default</td><td>The isolation level of the copying consumer. See the failure section: the default copied aborted records in the lab.</td></tr>
+        <tr><td><code>tasks.max</code></td><td>1</td><td>default</td><td>Parallel copy tasks.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h3>Share groups</h3>
+    <p>Broker defaults were read from the lab cluster. The consumer default is from the Kafka 4.3 reference.</p>
+  </div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Config</th><th>Where</th><th>Default</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>group.share.record.lock.duration.ms</code></td><td>Broker</td><td>30000</td><td>How long a member may hold a record before it is offered again. Allowed range 15000 to 60000.</td></tr>
+        <tr><td><code>group.share.delivery.count.limit</code></td><td>Broker</td><td>5</td><td>Deliveries of one record before the broker gives up on it. Allowed range 2 to 10.</td></tr>
+        <tr><td><code>group.share.partition.max.record.locks</code></td><td>Broker</td><td>2000</td><td>Records of one partition that can be held by members at once.</td></tr>
+        <tr><td><code>group.share.max.size</code></td><td>Broker</td><td>200</td><td>Most members in one share group.</td></tr>
+        <tr><td><code>group.share.session.timeout.ms</code>, <code>group.share.heartbeat.interval.ms</code></td><td>Broker</td><td>45000, 5000</td><td>Liveness of share group members.</td></tr>
+        <tr><td><code>group.share.assignors</code></td><td>Broker</td><td><code>simple</code></td><td>How partitions are given to members.</td></tr>
+        <tr><td><code>share.coordinator.state.topic.replication.factor</code>, <code>share.coordinator.state.topic.min.isr</code></td><td>Broker</td><td>the lab sets 3 and 2</td><td>Safety of <code>__share_group_state</code>.</td></tr>
+        <tr><td><code>share.coordinator.state.topic.num.partitions</code></td><td>Broker</td><td>50</td><td>Partitions of that topic.</td></tr>
+        <tr><td><code>share.acknowledgement.mode</code></td><td>Consumer</td><td><code>implicit</code></td><td><code>implicit</code>: records are accepted when the next poll is called. <code>explicit</code>: your code acknowledges each record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>The copy contains aborted transactions</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Consumers on the second cluster receive records that were rolled back on the first.</dd>
+      <dt>Evidence</dt><dd>In the lab, <code>payments</code> had 78 offsets on the source and <code>main.payments</code> had 73 on the copy. The source held 73 data records and 5 transaction markers. Of the 73 data records, 38 belonged to the transaction that was aborted in module 06. They were copied as ordinary records, and the markers were not.</dd>
+      <dt>Cause</dt><dd>The copying consumer reads with the default isolation level, <code>read_uncommitted</code>.</dd>
+      <dt>Fix</dt><dd>Set the source consumer's isolation level to <code>read_committed</code> in the MirrorMaker 2 configuration for any flow that carries transactional topics. <span class="tag-unverified">unverified: I did not rerun the lab with this setting</span></dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Records are lost in a failover</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The main site is lost. Records that were acknowledged there but not yet copied do not exist on the standby.</dd>
+      <dt>Cause</dt><dd>Copying between clusters is asynchronous.</dd>
+      <dt>Fix</dt><dd>Measure the copy delay all the time and agree that this delay is your possible data loss. If no loss is acceptable, you need a stretch cluster, or the producing application must be able to send again from its own source of truth.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Consumers repeat or skip after a failover</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A consumer starts on the standby at the wrong place.</dd>
+      <dt>Cause</dt><dd>Offsets differ between clusters. Translated offsets are cautious, so some records repeat: 149 for one partition in the lab. If offset translation was not set up, the consumer starts from <code>auto.offset.reset</code>, which can skip everything or repeat everything.</dd>
+      <dt>Fix</dt><dd>Turn on offset translation for the groups that must fail over. Make consumers safe to repeat. Remember the topic name changes to the prefixed form unless you use the identity policy.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Failback is harder than failover</h3>
+    <dl>
+      <dt>What breaks</dt><dd>After the main site returns, the standby holds records the main site never saw, and the main site may hold records that were never copied.</dd>
+      <dt>Fix</dt><dd>Plan the return path before you need it. Often the simplest safe plan is to treat the standby as the new main, rebuild the old main as its standby from scratch, and switch back in a quiet period. Practise it.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Two active clusters update the same thing</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The same customer is changed in both regions at once. Each region applies the other's change late. The regions end with different values.</dd>
+      <dt>Cause</dt><dd>There is no order between two clusters.</dd>
+      <dt>Fix</dt><dd>Give each entity a home region that owns its writes, or design updates that can be merged in any order. This is an application design problem that Kafka cannot solve for you.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A stretch cluster with a slow link</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Write latency rises for every producer, followers fall out of sync, and controller elections start.</dd>
+      <dt>Cause</dt><dd>The delay between sites is too high or varies.</dd>
+      <dt>Fix</dt><dd>Use a stretch cluster only across sites with a short, steady delay. Measure the 99th percentile, not the average.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A share group job is done twice, or gives up</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A job takes longer than the lock. The broker offers it to a second worker while the first is still working. Or a job fails 5 times and is dropped.</dd>
+      <dt>Fix</dt><dd>Keep jobs shorter than the lock time, or raise the lock within its allowed range. Make jobs safe to repeat. Decide what happens to a job that reaches the delivery limit: at the least, log it where someone will see it.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Kafka was the wrong choice</h3>
+    <dl>
+      <dt>You observe</dt><dd>A team spends more time on the cluster than on the product. Topics carry a few records each hour. Applications wait on a reply topic to imitate a function call.</dd>
+      <dt>Fix</dt><dd>Use the checklist in this module at design time. For small volumes, a table in the database you already run, or a managed queue, is cheaper to own.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026.</strong> Part B uses a second cluster of one broker, <code>kafka-dr</code>, which I added to <code>docker-compose.yml</code>. The flows that were copied are the topics from earlier labs.</p>
+  </div>
+  <div class="code"><pre><code>k()  { docker exec -i kafka-1  /opt/kafka/bin/"$@"; }
+dr() { docker exec -i kafka-dr /opt/kafka/bin/"$@"; }
+B=kafka-1:19092; D=kafka-dr:19092</code></pre></div>
+
+  <h3>Part A, step 1. Two workers share one partition</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic jobs --partitions 1 --replication-factor 3
+
+docker exec -d kafka-1 sh -c '/opt/kafka/bin/kafka-console-share-consumer.sh \
+  --bootstrap-server kafka-1:19092 --topic jobs --group workers > /tmp/share-a.txt'
+docker exec -d kafka-2 sh -c '/opt/kafka/bin/kafka-console-share-consumer.sh \
+  --bootstrap-server kafka-1:19092 --topic jobs --group workers > /tmp/share-b.txt'
+# wait 12 seconds
+for i in $(seq 1 20); do echo "job-$i" | k kafka-console-producer.sh --bootstrap-server $B --topic jobs; done
+# wait 6 seconds
+docker exec kafka-1 cat /tmp/share-a.txt
+docker exec kafka-2 cat /tmp/share-b.txt</code></pre></div>
+  <pre class="out">worker A:  job-2 job-4 job-6 job-8 job-10 job-12 job-14 job-16 job-18 job-20
+worker B:  job-1 job-3 job-5 job-7 job-9 job-11 job-13 job-15 job-17 job-19</pre>
+  <p>Twenty jobs in one partition, ten for each worker. No job went to both.</p>
+
+  <h3>Part A, step 2. Look at the share group</h3>
+  <div class="code"><pre><code>k kafka-share-groups.sh --bootstrap-server $B --describe --group workers
+k kafka-share-groups.sh --bootstrap-server $B --describe --group workers --members</code></pre></div>
+  <pre class="out">GROUP    TOPIC  PARTITION  START-OFFSET  LAG
+workers  jobs   0          19            0
+
+GROUP    CONSUMER-ID             HOST         CLIENT-ID               #PARTITIONS  ASSIGNMENT
+workers  KrADfCvxRA2wNNbQ2n91zQ  /172.23.0.3  console-share-consumer  1            jobs:0
+workers  wJoM_f5OQyS0TDxCfg_omA  /172.23.0.2  console-share-consumer  1            jobs:0</pre>
+  <p>Both members are assigned <code>jobs:0</code>, which a consumer group never allows. The position is a start offset, not a committed offset.</p>
+
+  <h3>Part A, step 3. The same with a consumer group</h3>
+  <div class="code"><pre><code>docker exec -d kafka-1 sh -c '/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka-1:19092 \
+  --topic jobs --group classic-workers --from-beginning > /tmp/cg-a.txt'
+docker exec -d kafka-2 sh -c '/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka-1:19092 \
+  --topic jobs --group classic-workers --from-beginning > /tmp/cg-b.txt'
+# wait 14 seconds
+docker exec kafka-1 sh -c 'wc -l &lt; /tmp/cg-a.txt'; docker exec kafka-2 sh -c 'wc -l &lt; /tmp/cg-b.txt'
+
+docker exec kafka-1 sh -c "pkill -f ConsoleShareConsumer; pkill -f ConsoleConsumer"
+docker exec kafka-2 sh -c "pkill -f ConsoleShareConsumer; pkill -f ConsoleConsumer"</code></pre></div>
+  <pre class="out">20
+0</pre>
+  <p>One consumer received all 20 jobs and the other received none: one partition, one reader.</p>
+
+  <h3>Part B, step 1. Start the second cluster and the copy</h3>
+  <div class="code"><pre><code>docker compose up -d kafka-dr
+
+docker exec kafka-1 sh -c 'cat > /tmp/mm2.properties &lt;&lt;EOF
+clusters = main, dr
+main.bootstrap.servers = kafka-1:19092
+dr.bootstrap.servers = kafka-dr:19092
+main->dr.enabled = true
+main->dr.topics = orders|payments|events
+dr->main.enabled = false
+groups = g-.*
+replication.factor = 1
+checkpoints.topic.replication.factor = 1
+heartbeats.topic.replication.factor = 1
+offset-syncs.topic.replication.factor = 1
+offset.storage.replication.factor = 1
+status.storage.replication.factor = 1
+config.storage.replication.factor = 1
+sync.group.offsets.enabled = true
+emit.checkpoints.interval.seconds = 10
+sync.group.offsets.interval.seconds = 10
+refresh.topics.interval.seconds = 10
+refresh.groups.interval.seconds = 10
+EOF'
+docker exec -d kafka-1 sh -c '/opt/kafka/bin/connect-mirror-maker.sh /tmp/mm2.properties > /tmp/mm2.log 2>&1'
+# wait about 45 seconds
+dr kafka-topics.sh --bootstrap-server $D --list</code></pre></div>
+  <pre class="out">__consumer_offsets
+heartbeats
+main.checkpoints.internal
+main.events
+main.heartbeats
+main.orders
+main.payments
+mm2-configs.main.internal
+mm2-offsets.main.internal
+mm2-status.main.internal</pre>
+  <p>The three topics exist on the second cluster with the prefix <code>main.</code>. The other topics are MirrorMaker 2's own: translated offsets in <code>main.checkpoints.internal</code>, the link's heartbeat, and its Connect state. The replication factor of 1 is only because this second cluster has one broker.</p>
+
+  <h3>Part B, step 2. Compare source and copy</h3>
+  <div class="code"><pre><code>k  kafka-get-offsets.sh --bootstrap-server $B --topic orders
+dr kafka-get-offsets.sh --bootstrap-server $D --topic main.orders
+k  kafka-get-offsets.sh --bootstrap-server $B --topic payments
+dr kafka-get-offsets.sh --bootstrap-server $D --topic main.payments</code></pre></div>
+  <pre class="out">orders:0:12       orders:1:3       orders:2:3       orders:3:0  orders:4:1       orders:5:0
+main.orders:0:12  main.orders:1:3  main.orders:2:3  …           main.orders:4:1  …
+
+payments:0:78
+main.payments:0:73</pre>
+  <p>The copy has the same six partitions, and each record is in the same partition number. For <code>orders</code> the offsets happen to match, because nothing was ever removed from it. For <code>payments</code> they do not: 78 against 73. See the first failure scenario for what the difference of 5 means, and for what is wrong with the 73.</p>
+
+  <h3>Part B, step 3. Measure the delay</h3>
+  <div class="code"><pre><code>echo 'user-17:mirrored-2' | k kafka-console-producer.sh --bootstrap-server $B --topic orders \
+  --reader-property parse.key=true --reader-property key.separator=:
+# repeat until the number changes:
+dr kafka-get-offsets.sh --bootstrap-server $D --topic main.orders --partitions 0</code></pre></div>
+  <pre class="out">main.orders:0:12   →   main.orders:0:13     about 2 seconds later</pre>
+
+  <h3>Part B, step 4. See translated consumer offsets</h3>
+  <div class="code"><pre><code>k  kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-new
+dr kafka-consumer-groups.sh --bootstrap-server $D --describe --group g-new</code></pre></div>
+  <pre class="out">on main:   g-new  events       0  CURRENT-OFFSET 1261  LOG-END-OFFSET 1657  LAG 396
+           g-new  events       1  CURRENT-OFFSET  592  LOG-END-OFFSET  928  LAG 336
+
+on dr:     g-new  main.events  0  CURRENT-OFFSET 1112  LOG-END-OFFSET 1657  LAG 545
+           g-new  main.events  1  CURRENT-OFFSET  405  LOG-END-OFFSET  928  LAG 523</pre>
+  <p>The group <code>g-new</code> never ran on the second cluster, yet it has committed offsets there, on the prefixed topic. They are behind the source values: 1112 against 1261 for partition 0. If this group failed over now, it would read 149 records of that partition a second time and miss none.</p>
+
+  <h3>Step 5. Stop the lab processes</h3>
+  <div class="code"><pre><code>docker exec kafka-1 sh -c "pkill -f MirrorMaker; pkill -f ConnectDistributed"
+docker compose down        # stop every container, keep nothing running</code></pre></div>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Three copies in one cluster is disaster recovery.</td><td>It protects against a broker failure. A site failure takes all three unless the cluster spans sites.</td></tr>
+        <tr><td>A mirrored topic has the same offsets.</td><td>It has its own. Consumer positions must be translated.</td></tr>
+        <tr><td>Copying between clusters loses nothing.</td><td>It is asynchronous. Whatever was in flight is lost with the source.</td></tr>
+        <tr><td>MirrorMaker 2 respects transactions by default.</td><td>In the lab it copied aborted records as ordinary records.</td></tr>
+        <tr><td>Active-active gives the best of everything.</td><td>It moves the hard problem, conflicting updates, into your application.</td></tr>
+        <tr><td>A disaster plan that was never practised is a plan.</td><td>It is a hope. Run the failover, and the return, on a schedule.</td></tr>
+        <tr><td>Share groups replace consumer groups.</td><td>They are for independent jobs. Events that need order still need consumer groups.</td></tr>
+        <tr><td>Every asynchronous problem needs Kafka.</td><td>Kafka is a replayable log for many readers at high volume. Without those needs, simpler tools cost less to own.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>The business says "we cannot lose any payment event, even if a region is lost". What do you propose?</summary><div class="answer">
+    <p>First make the requirement precise: zero loss of acknowledged records, and how long may the service be down? Zero loss rules out asynchronous copying alone.</p>
+    <p>Option one: a stretch cluster over three zones of one region, with a minimum of 2 and <code>acks=all</code>. It survives a zone, not a region. Option two, for a real region loss: keep the source of truth in a database that is itself replicated synchronously, publish through an outbox, and treat Kafka in the second region as rebuildable from that source. Then Kafka's asynchronous copy only decides how fast you recover, not what you lose.</p>
+    <p>State the cost of each plainly. Synchronous replication across regions makes every payment slower, all year, to protect against a rare event.</p>
+  </div></details>
+
+  <details class="qa"><summary>Design the failover runbook for an active and standby pair.</summary><div class="answer">
+    <p>Before: copy delay and heartbeat are monitored; offset translation is on for the groups that matter; consumers are safe to repeat; clients can be pointed at the standby by configuration, and know the prefixed topic names or use the identity policy.</p>
+    <p>During: decide, by a named person and a stated rule, that the main site is lost. Stop the copy so that a half-alive source cannot write. Point producers at the standby. Start consumers there from the translated offsets. Record the time and the last copied offsets for each topic: that is the possible loss.</p>
+    <p>After: do not switch back in a hurry. Rebuild the old site as the new standby, let it catch up, and return in a planned window. Then review what was lost and what repeated.</p>
+  </div></details>
+
+  <details class="qa"><summary>When would you choose share groups over a traditional message queue product?</summary><div class="answer">
+    <p>When you already run Kafka and the jobs are produced from data that is in Kafka: one platform, one security model, and the same records can also be read as a log by other applications.</p>
+    <p>A dedicated queue is still the better fit when you need features that are native there: priorities, a delay for each message, routing by content, a built-in dead-letter queue, or strict order within a group of messages together with many competing workers. Check also the maturity of share groups in your client language.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you migrate every application from an old cluster to a new one with no downtime?</summary><div class="answer">
+    <p>Copy all topics from old to new with MirrorMaker 2, using the identity policy so that names stay the same, and with offset translation. Wait until the copy delay is steady and low.</p>
+    <p>Move consumers first, group by group: stop a group on the old cluster, start it on the new one from its translated offsets. It repeats a few records. Then move producers. For a topic with keys, move all its producers together, or records for one key will be written on both sides out of order. When the old cluster's topics receive nothing and are fully copied, stop the copy and retire the old cluster.</p>
+  </div></details>
+
+  <details class="qa"><summary>A team wants to use Kafka for request and reply between two services. What do you say?</summary><div class="answer">
+    <p>It works, and it is usually the wrong shape. The caller must create a reply topic or partition, match replies to requests with an id, handle timeouts and late replies, and it pays the latency of two produce and fetch round trips. Failures are harder to see than a failed call.</p>
+    <p>If the caller needs an answer now, use a direct call. Use Kafka where the sender does not need to wait: publish the fact, and let the other service react. If they want both, do the call directly and publish an event about the result.</p>
+  </div></details>
+
+  <details class="qa"><summary>What would you put on one page as "how we use Kafka here"?</summary><div class="answer">
+    <p>Topic standards: naming, three copies, a minimum of 2, how partition counts are chosen, who owns each topic. Client standards: <code>acks=all</code>, idempotence, a client id, handling of send errors, consumers that are safe to repeat, explicit <code>auto.offset.reset</code>. Data standards: a schema for every topic with a stated compatibility mode. Failure standards: dead-letter topics with owners, lag alerts in time, a practised recovery plan. And a short list of what Kafka is not to be used for.</p>
+    <p>These are the decisions from all ten modules. Writing them down once is what stops each team from learning them through an incident.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. What do recovery point objective and recovery time objective measure?</summary><div class="answer"><p>How much recent data may be lost, and how long the service may be down.</p></div></details>
+  <details class="qa"><summary>2. What is MirrorMaker 2 built on?</summary><div class="answer"><p>Kafka Connect: a source connector, a checkpoint connector and a heartbeat connector.</p></div></details>
+  <details class="qa"><summary>3. The topic <code>orders</code> is copied from a cluster with the alias <code>main</code>. What is it called on the target by default?</summary><div class="answer"><p><code>main.orders</code>.</p></div></details>
+  <details class="qa"><summary>4. Why can a consumer not reuse its committed offsets on the other cluster?</summary><div class="answer"><p>The copy is a new topic with its own offsets. They must be translated.</p></div></details>
+  <details class="qa"><summary>5. Is copying between clusters synchronous?</summary><div class="answer"><p>No. The producer is answered before the record reaches the other cluster.</p></div></details>
+  <details class="qa"><summary>6. What makes a stretch cluster lose no committed record when a site fails?</summary><div class="answer"><p>It is one cluster with replicas in each site, <code>acks=all</code> and a minimum of 2, so each record is in two sites before it is acknowledged.</p></div></details>
+  <details class="qa"><summary>7. What can a share group do that a consumer group cannot?</summary><div class="answer"><p>Let several members read the same partition, with each record acknowledged alone.</p></div></details>
+  <details class="qa"><summary>8. What happens to a share group record whose lock runs out?</summary><div class="answer"><p>It becomes available again and another member can take it, until the delivery limit, 5 by default.</p></div></details>
+  <details class="qa"><summary>9. What does a share group give up?</summary><div class="answer"><p>Order.</p></div></details>
+  <details class="qa"><summary>10. Name two signs that a use case does not need Kafka.</summary><div class="answer"><p>Any two of: the caller waits for a reply; low volume with a database already at hand; messages need priorities or delays; nobody will own the cluster.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="09-operations.html">← 09 Operations</a>
+    <a class="btn primary" href="11-security-lab.html">11 Security lab →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- share group vs consumer group ----------
+(function () {
+  const lanes = document.getElementById('sg-lanes'), out = document.getElementById('sg-out');
+  const types = [...document.querySelectorAll('[data-g]')], nSel = document.getElementById('sg-n');
+  let type = 'share', got, next, held;
+
+  function reset(note) {
+    const n = Number(nSel.value);
+    got = Array.from({ length: n }, () => []); next = 1; held = null;
+    draw(note || 'One partition. Press "Send 8 jobs".');
+  }
+  function draw(note) {
+    lanes.innerHTML = '';
+    got.forEach((jobs, i) => {
+      const lane = document.createElement('div'); lane.className = 'lane';
+      lane.innerHTML = '<div class="lane-name">worker ' + (i + 1) + '</div>';
+      const cells = document.createElement('div'); cells.className = 'lane-cells';
+      jobs.forEach((j) => { const c = document.createElement('div'); c.className = 'cell small own-' + (i % 4) + (j.again ? ' new' : ''); c.textContent = 'job ' + j.id; c.style.animation = 'none'; if (j.lost) { c.className = 'cell small gone'; } cells.appendChild(c); });
+      lane.appendChild(cells); lanes.appendChild(lane);
+    });
+    out.innerHTML = note;
+  }
+  document.getElementById('sg-send').addEventListener('click', () => {
+    const n = got.length;
+    for (let k = 0; k < 8; k++) { const id = next++; const w = type === 'share' ? (id - 1) % n : 0; got[w].push({ id }); }
+    draw(type === 'share'
+      ? 'Share group: the broker hands records to whichever worker asks. <b>All ' + n + ' worker' + (n === 1 ? '' : 's') + ' work on the one partition.</b> Order across workers is not kept.'
+      : n > 1 ? 'Consumer group: one partition has one owner. <span class="warn">Worker 1 gets every job; the other ' + (n - 1) + ' wait idle.</span> To use them you would need more partitions.'
+              : 'Consumer group with one worker: it gets every job, in order.');
+  });
+  document.getElementById('sg-fail').addEventListener('click', () => {
+    if (!got[0].length) { draw('Send jobs first.'); return; }
+    const job = got[0][got[0].length - 1];
+    if (job.lost) { draw('Worker 1 has already failed on its last job. Send more jobs.'); return; }
+    job.lost = true;
+    if (type === 'share') {
+      const target = got.length > 1 ? 1 : 0;
+      got[target].push({ id: job.id, again: true });
+      draw('Worker 1 took job ' + job.id + ' and stopped without acknowledging it. After the lock time, 30 seconds, the broker offered it again and worker ' + (target + 1) + ' took it. <b>The other jobs were not delayed.</b>\nA job is offered at most 5 times.');
+    } else {
+      draw('Worker 1 stopped before committing. After a rebalance, the next owner starts from the last committed offset and repeats from there. <span class="warn">Everything behind job ' + job.id + ' in the partition waits</span> until then.');
+    }
+  });
+  types.forEach((b) => b.addEventListener('click', () => { type = b.dataset.g; types.forEach((x) => x.setAttribute('aria-pressed', String(x === b))); reset(); }));
+  nSel.addEventListener('change', () => reset());
+  reset();
+})();
+
+// ---------- disaster recovery designs ----------
+(function () {
+  const btns = [...document.querySelectorAll('[data-dr]')];
+  const rpo = document.getElementById('dr-rpo'), rto = document.getElementById('dr-rto'), cost = document.getElementById('dr-cost'), out = document.getElementById('dr-out');
+  const D = {
+    ap: ['seconds', 'minutes to hours', 'medium',
+      'One cluster serves everything. MirrorMaker 2 copies to a second cluster in another region, which waits.\n<b>Good:</b> simple to reason about; regions can be far apart; the standby can also serve analytics.\n<span class="warn">Watch:</span> the copy is asynchronous, so the last seconds can be lost. Failover is a procedure with human decisions. The standby is paid for and mostly idle. Consumers need translated offsets.'],
+    aa: ['seconds', 'seconds to minutes', 'high',
+      'Two clusters both serve local producers and consumers. Each copies its topics to the other, with prefixes, and consumers read the local and the mirrored topic.\n<b>Good:</b> users are served from the near region; losing a region moves its traffic to the other, which is already running.\n<span class="warn">Watch:</span> there is no order between the two clusters. Updates to the same entity in both regions conflict, and your application must resolve that. Every consumer sees data from two topics.'],
+    stretch: ['zero', 'seconds', 'high, in network',
+      'One cluster with brokers and controllers in three sites, a replica in each, acks=all and a minimum of 2.\n<b>Good:</b> no committed record is lost when a site fails; failover is the normal leader election; clients do nothing; offsets do not change.\n<span class="warn">Watch:</span> every write waits for another site, so the sites must be close: zones of one region. It does not protect against the loss of the whole region, or against a mistake such as a deleted topic.'],
+  };
+  function draw(k) { rpo.textContent = D[k][0]; rto.textContent = D[k][1]; cost.textContent = D[k][2]; out.innerHTML = D[k][3]; }
+  btns.forEach((b) => b.addEventListener('click', () => { btns.forEach((x) => x.setAttribute('aria-pressed', String(x === b))); draw(b.dataset.dr); }));
+  draw('ap');
+})();
+
+// ---------- fit checklist ----------
+(function () {
+  const boxes = [...document.querySelectorAll('#ft-checks input')], out = document.getElementById('ft-out');
+  function draw() {
+    const picked = boxes.filter((b) => b.checked);
+    if (!picked.length) { out.textContent = 'Nothing ticked yet.'; return; }
+    const plus = picked.filter((b) => Number(b.dataset.w) > 0).reduce((s, b) => s + Number(b.dataset.w), 0);
+    const minus = picked.filter((b) => Number(b.dataset.w) < 0).reduce((s, b) => s - Number(b.dataset.w), 0);
+    let msg;
+    if (plus >= 4 && minus <= 1) msg = '<b>A good fit.</b> You need what Kafka is built for: a shared, replayable log at volume.';
+    else if (plus >= 3 && minus >= 2) msg = '<b>Mixed.</b> Kafka fits the data-sharing part. Handle the parts you ticked in the lower half with another tool beside it: a direct call for replies, a queue for priorities and delays, an object store for large files.';
+    else if (minus > plus) msg = '<span class="warn">Probably not Kafka.</span> A direct call, a managed queue, or a jobs table in your existing database will be simpler to build and to own.';
+    else msg = '<b>It could work, but the case is weak.</b> Ask what you would lose with a simpler tool. If the answer is "nothing yet", start simple and move when the first real need for replay or a second consumer appears.';
+    out.innerHTML = msg + '\nReasons for: ' + plus + '. Reasons against: ' + minus + '. This is a prompt for a discussion, not a formula.';
+  }
+  boxes.forEach((b) => b.addEventListener('change', draw));
+  draw();
+})();
+</script>
+<script src="extras/10.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

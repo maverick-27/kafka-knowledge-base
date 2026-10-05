@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>05 KRaft and the controller · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  button.node { font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
+  .node .role { font: 600 1rem var(--display); margin-bottom: .25rem; }
+  .node .hint2 { font-size: .82rem; color: var(--muted); }
+  .stage.on { border-color: var(--write); background: color-mix(in srgb, var(--write) 18%, var(--bg)); }
+  .state-table td:first-child { font-family: var(--mono); font-size: .88rem; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 05 KRaft</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 05 · Day 4 · Kafka 4.3</div>
+  <h1>KRaft and the controller</h1>
+  <p class="lede">Something must decide which broker leads each partition, which brokers are alive, and what every topic's settings are. In Kafka 4 that is a small group of controllers that keep the cluster's metadata in a log of its own.</p>
+
+  <div class="lab-panel" id="q-demo" style="margin:0">
+    <h3>Try it: a majority must be running</h3>
+    <p class="hint">Click a controller to stop or start it. The cluster can change its metadata only while more than half of the controllers run.</p>
+    <div class="controls">
+      <span id="q-lbl">Controllers</span>
+      <div class="seg" role="group" aria-labelledby="q-lbl">
+        <button type="button" data-n="3" aria-pressed="true">3</button>
+        <button type="button" data-n="5" aria-pressed="false">5</button>
+      </div>
+    </div>
+    <div class="nodes" id="q-nodes"></div>
+    <div class="readout" id="q-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>A Kafka cluster has <strong>metadata</strong>: the list of topics, the replicas and leader of every partition, every setting, and the list of brokers. All brokers must agree on it. If two brokers both believed they led the same partition, data would be lost.</p>
+  <p>Before Kafka 4, a separate system named ZooKeeper held the metadata. Kafka 4.0 removed it. Kafka now stores its metadata in itself, with a design named <strong>KRaft</strong>: Kafka plus Raft. <strong>Raft</strong> is a well-known method for several servers to agree on one ordered log, as long as more than half of them can talk to each other.</p>
+  <p>The servers that run it are <strong>controllers</strong>. They form the <strong>quorum</strong>, the voting group. One of them is elected leader and is the <strong>active controller</strong>. It makes every metadata decision and writes it as a record in the <strong>metadata log</strong>. The other controllers copy that log and are ready to take over. Brokers copy it too, and act on what they read.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> The cluster's metadata is one more Kafka log, written by one elected controller, copied to a majority before it counts, and replayed by every broker.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+    <p>You already know the log from module 01 and replication from module 04. KRaft uses the same ideas with one change: for metadata, a record is committed when a <strong>majority</strong> of the controllers have it, not when an in-sync set has it.</p>
+    <p>Think of a committee of three that keeps the official minute book. One member writes. An entry is official when two of the three have it. If the writer leaves, the other two elect a new writer between them. If two members leave, the last one cannot make anything official, because one is not a majority of three.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Controllers</th><th>Majority</th><th>Failures survived</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>1</td><td>0</td></tr>
+          <tr><td>3</td><td>2</td><td>1</td></tr>
+          <tr><td>5</td><td>3</td><td>2</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Four controllers survive one failure, the same as three, so an even number adds cost without adding safety. Production clusters use three, or five when two failures at once must be survived.</p>
+
+    <h3>Two roles for a server</h3>
+    <p>Each Kafka process has a <code>process.roles</code> setting.</p>
+    <ul>
+      <li><strong><code>broker</code></strong>: stores partitions and serves clients.</li>
+      <li><strong><code>controller</code></strong>: votes in the quorum and stores the metadata log.</li>
+      <li><strong><code>broker,controller</code></strong>: both in one process. This is <strong>combined mode</strong>. The lab cluster uses it because it needs fewer containers. For production, use separate controller servers, so that a busy or failing broker cannot disturb the quorum.</li>
+    </ul>
+
+    <h3>The metadata is a list of changes</h3>
+    <p>The metadata log does not store "the current state". It stores each change. Any server can rebuild the current state by replaying the records from the start. Step through six records of the kinds found in the lab cluster's log. The third and fourth are copied from it; the others are shortened examples:</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="replay-demo">
+    <h3>Step through it: replay the metadata log</h3>
+    <div class="readout" id="rp-rec" aria-live="polite"></div>
+    <div class="table-wrap" style="margin-top:1rem">
+      <table class="state-table" style="min-width:0">
+        <thead><tr><th>State after replay</th><th>Value</th></tr></thead>
+        <tbody id="rp-state"></tbody>
+      </table>
+    </div>
+    <div class="controls">
+      <button class="btn primary" type="button" id="rp-next">Apply next record</button>
+      <button class="btn" type="button" id="rp-reset">Start again</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>The metadata log</h3>
+    <p>The metadata log is a topic with one partition, named <code>__cluster_metadata</code>. It lives in the directory <code>__cluster_metadata-0</code> on every controller and every broker. It has segments and indexes like any other log.</p>
+    <p>The record types tell you what the controller does. In the lab cluster's log, after 40 minutes of labs:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Record type</th><th>Count</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>NO_OP_RECORD</code></td><td>4,731</td><td>Written every 500 ms when nothing else happens, so that every server can tell the log is alive.</td></tr>
+          <tr><td><code>PARTITION_CHANGE_RECORD</code></td><td>1,533</td><td>A partition's leader or in-sync set changed. Each broker stop in the labs caused many.</td></tr>
+          <tr><td><code>PARTITION_RECORD</code></td><td>79</td><td>A partition was created, with its replicas, in-sync set and leader.</td></tr>
+          <tr><td><code>BROKER_REGISTRATION_CHANGE_RECORD</code></td><td>51</td><td>A broker was fenced or unfenced.</td></tr>
+          <tr><td><code>CONFIG_RECORD</code></td><td>23</td><td>A topic or broker setting changed.</td></tr>
+          <tr><td><code>TOPIC_RECORD</code></td><td>19</td><td>A topic was created.</td></tr>
+          <tr><td><code>REGISTER_BROKER_RECORD</code></td><td>13</td><td>A broker started and registered.</td></tr>
+          <tr><td><code>FEATURE_LEVEL_RECORD</code></td><td>6</td><td>The cluster's feature versions were set.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Electing the active controller</h3>
+    <ol class="steps">
+      <li class="on">Every controller follows the current leader and fetches from it. Time is divided into <strong>epochs</strong>; each epoch has at most one leader.</li>
+      <li class="on">If a controller hears nothing from the leader for <code>controller.quorum.fetch.timeout.ms</code>, 2 seconds, it first asks the others if they would vote for it. This check avoids needless elections.</li>
+      <li class="on">If a majority would, it starts a new epoch and asks for real votes.</li>
+      <li class="on">A controller votes for a candidate only if the candidate's log is at least as complete as its own. So the winner always has every committed record.</li>
+      <li class="on">The candidate with votes from a majority becomes leader. In the lab this took about 1 second.</li>
+    </ol>
+
+    <h3>How brokers stay current</h3>
+    <p>A broker is an <strong>observer</strong> of the quorum. It fetches the metadata log like a follower but does not vote. As it reads each record it updates its own picture: "I am now leader of orders-0", "the in-sync set of orders-1 changed". Clients then get this picture when they ask any broker for metadata.</p>
+
+    <h3>The life of a broker</h3>
+  </div>
+
+  <div class="lab-panel wide reveal" id="life-demo">
+    <h3>Step through it: from start to stop</h3>
+    <div class="pipeline" id="lf-stages">
+      <div class="stage" data-i="0"><b>1 Start</b>Reads <code>meta.properties</code>.</div>
+      <div class="stage" data-i="1"><b>2 Register</b>Gets a broker epoch. Starts fenced.</div>
+      <div class="stage" data-i="2"><b>3 Catch up</b>Replays the metadata log.</div>
+      <div class="stage" data-i="3"><b>4 Unfenced</b>Can lead partitions.</div>
+      <div class="stage" data-i="4"><b>5 Heartbeat</b>Every 2 seconds.</div>
+      <div class="stage" data-i="5"><b>6 Stop</b>Clean, or fenced after 9 seconds.</div>
+    </div>
+    <div class="controls">
+      <button class="btn primary" type="button" id="lf-next">Next</button>
+      <button class="btn" type="button" id="lf-reset">Start again</button>
+    </div>
+    <div class="readout" id="lf-out" aria-live="polite"></div>
+  </div>
+
+  <div class="col">
+    <p><strong>Fenced</strong> means the controller does not let the broker lead any partition and does not count it in any in-sync set. A broker is fenced when it starts, until it has caught up. It is fenced again if the controller hears no heartbeat for <code>broker.session.timeout.ms</code>, 9 seconds. Fencing is how Kafka stops a broker that is alive but cut off from acting on old information.</p>
+
+    <h3>Snapshots</h3>
+    <p>Replaying every change since the cluster was created would take longer and longer. So each server writes a <strong>snapshot</strong> from time to time: the full state at one offset. After that, the older part of the log can be deleted. A new or restarted server loads the newest snapshot and replays only the records after it. A snapshot is written after 20 MiB of new records or after 1 hour, whichever comes first.</p>
+
+    <h3>Identity on disk</h3>
+    <p>Each data directory has a file <code>meta.properties</code> with the cluster id and the node id. A server refuses to start if these do not match its configuration. This stops a disk from one cluster being used in another by mistake. Before a first start, the directory is prepared with <code>kafka-storage.sh format</code>; the lab's Docker image does this for you. <span class="tag-unverified">unverified: I did not run the format tool</span></p>
+
+    <h3>Feature versions</h3>
+    <p>Servers on a new software version do not use new record formats until the cluster's <code>metadata.version</code> is raised. This makes a rolling upgrade safe: upgrade every server first, then raise the version with <code>kafka-features.sh</code> as a separate step.</p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>All defaults below were read from the lab cluster with <code>kafka-configs.sh --describe --all</code>.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Config</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>process.roles</code></td><td>none; the lab sets <code>broker,controller</code></td><td>What this server is: broker, controller, or both.</td><td>Use separate controllers in production.</td></tr>
+        <tr><td><code>node.id</code></td><td>none (required)</td><td>The unique number of this server.</td><td>Set once. Never reuse a number for a different server.</td></tr>
+        <tr><td><code>controller.quorum.voters</code></td><td>none; the lab sets three</td><td>A fixed list of the controllers: id, host and port for each.</td><td>The older, fixed way to define the quorum. All servers must have the same list.</td></tr>
+        <tr><td><code>controller.quorum.bootstrap.servers</code></td><td>empty</td><td>Addresses used to find the quorum when the set of controllers can change.</td><td>The newer way. It allows adding and removing controllers without a full restart. <span class="tag-unverified">unverified</span></td></tr>
+        <tr><td><code>controller.listener.names</code></td><td>none; the lab sets <code>CONTROLLER</code></td><td>Which network listener the controllers use.</td><td>Keep the controller listener on a private network.</td></tr>
+        <tr><td><code>controller.quorum.election.timeout.ms</code></td><td>1000</td><td>How long a candidate waits for votes before it tries again.</td><td>Raise on slow or far-apart networks.</td></tr>
+        <tr><td><code>controller.quorum.fetch.timeout.ms</code></td><td>2000</td><td>Time without contact with the leader before a controller starts an election.</td><td>Raise if elections happen with no real failure.</td></tr>
+        <tr><td><code>controller.quorum.election.backoff.max.ms</code></td><td>1000</td><td>Longest random wait before a new election attempt, to stop two candidates from tying again and again.</td><td>Rarely.</td></tr>
+        <tr><td><code>controller.quorum.request.timeout.ms</code></td><td>2000</td><td>Timeout for one request between controllers.</td><td>Rarely.</td></tr>
+        <tr><td><code>broker.heartbeat.interval.ms</code></td><td>2000</td><td>How often a broker reports to the active controller.</td><td>Rarely.</td></tr>
+        <tr><td><code>broker.session.timeout.ms</code></td><td>9000</td><td>Time without a heartbeat before a broker is fenced.</td><td>Lower it for faster failover of a hung broker. Too low fences healthy brokers during short pauses.</td></tr>
+        <tr><td><code>metadata.log.dir</code></td><td>null (uses the first of <code>log.dirs</code>)</td><td>Where the metadata log is stored.</td><td>Put it on its own fast disk on a busy broker.</td></tr>
+        <tr><td><code>metadata.log.max.record.bytes.between.snapshots</code></td><td>20971520 (20 MiB)</td><td>Write a snapshot after this much new metadata.</td><td>Rarely.</td></tr>
+        <tr><td><code>metadata.log.max.snapshot.interval.ms</code></td><td>3600000 (1 hour)</td><td>Write a snapshot at least this often when there are new records.</td><td>Rarely.</td></tr>
+        <tr><td><code>metadata.max.retention.bytes</code>, <code>metadata.max.retention.ms</code></td><td>104857600 (100 MiB), 604800000 (7 days)</td><td>How much of the metadata log and its snapshots to keep.</td><td>Rarely.</td></tr>
+        <tr><td><code>metadata.log.segment.bytes</code></td><td>1073741824 (1 GiB)</td><td>Segment size of the metadata log.</td><td>Rarely.</td></tr>
+        <tr><td><code>metadata.max.idle.interval.ms</code></td><td>500</td><td>The active controller writes a no-op record this often when idle.</td><td>Rarely.</td></tr>
+        <tr><td><code>controller.quorum.auto.join.enable</code></td><td><code>false</code></td><td>Lets a new controller add itself to the quorum.</td><td>Only with the newer, changeable quorum. <span class="tag-unverified">unverified</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>The active controller fails</h3>
+    <dl>
+      <dt>What happens</dt><dd>The other controllers elect a new leader. In the lab: about 1 second, and the leader epoch went from 3 to 4.</dd>
+      <dt>You observe</dt><dd>A new <code>LeaderId</code> in <code>kafka-metadata-quorum.sh describe --status</code>. Clients notice nothing: they do not talk to the controller.</dd>
+      <dt>Risk</dt><dd>Small. While the election runs, no partition can change leader, so a broker failure in that same second waits a little longer.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The quorum loses its majority</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Nothing in the metadata can change: no topic creation, no leader election, no in-sync set change, no setting change.</dd>
+      <dt>You observe</dt><dd>In the lab, with two of three nodes stopped, <code>kafka-topics.sh --describe</code> and <code>--create</code> both hung until the timeout. The remaining node logged "Election timed out before receiving sufficient vote responses".</dd>
+      <dt>What still works</dt><dd>Brokers keep serving the partitions they already lead, with the metadata they already have. A leader that fails in this state is not replaced. <span class="tag-unverified">unverified: the lab did not test client traffic in this state</span></dd>
+      <dt>Fix</dt><dd>Bring controllers back until a majority runs. Nothing else helps. Do not delete controller data to "reset" it.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A broker is fenced but still running</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The broker lost contact with the controller for 9 seconds, for example through a network fault or a long pause. The controller moved its leaderships away.</dd>
+      <dt>You observe</dt><dd><code>isFenced: true</code> for that broker in <code>kafka-broker-api-versions.sh</code>. Its partitions show other leaders and a smaller in-sync set.</dd>
+      <dt>Fix</dt><dd>When contact returns, the broker catches up on metadata and is unfenced by itself. If it happens often, look for long pauses or network loss before you raise the timeout.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A controller's disk is lost</h3>
+    <dl>
+      <dt>What breaks</dt><dd>That controller has no metadata log and no identity file.</dd>
+      <dt>Risk</dt><dd>If it rejoins with an empty disk and the same id, it could vote as if it had never promised anything. With a fixed voter list this needs great care.</dd>
+      <dt>Fix</dt><dd>Follow the documented replacement procedure for your quorum type. With the newer, changeable quorum, each controller disk has its own directory id, and a replaced disk is treated as a new voter. <span class="tag-unverified">unverified</span></dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Combined mode under load</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A broker that is also a controller becomes slow because of client traffic. Its controller part misses fetch deadlines, and the quorum holds elections with no real failure.</dd>
+      <dt>You observe</dt><dd>The quorum's leader epoch rises often.</dd>
+      <dt>Fix</dt><dd>Separate the roles: three small servers that are controllers only.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Too many partition changes at once</h3>
+    <dl>
+      <dt>What breaks</dt><dd>After a broker fails, the controller must write a change record for each partition it led or followed. On a cluster with hundreds of thousands of partitions this takes time, and failover is slower.</dd>
+      <dt>Evidence</dt><dd>The small lab cluster already wrote 1,533 partition change records for a handful of broker stops.</dd>
+      <dt>Fix</dt><dd>Keep the partition count for each broker within tested limits. This is one reason not to create partitions "just in case".</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against the lab cluster. Node 1 was the active controller at the start. Yours may differ; read <code>LeaderId</code> first and adjust.</p>
+  </div>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092</code></pre></div>
+
+  <h3>Step 1. Look at the quorum</h3>
+  <div class="code"><pre><code>k kafka-metadata-quorum.sh --bootstrap-server $B describe --status
+k kafka-metadata-quorum.sh --bootstrap-server $B describe --replication</code></pre></div>
+  <pre class="out">ClusterId:              4L6g3nShT-eMCtK--X86sw
+LeaderId:               1
+LeaderEpoch:            3
+HighWatermark:          5717
+MaxFollowerLag:         0
+MaxFollowerLagTimeMs:   0
+CurrentVoters:          [{"id": 1, …"CONTROLLER://kafka-1:9093"}, {"id": 2, …}, {"id": 3, …}]
+CurrentObservers:       []
+
+NodeId  LogEndOffset  Lag  Status
+1       5719          0    Leader
+2       5719          0    Follower
+3       5719          0    Follower</pre>
+  <p>Node 1 is the active controller. The metadata log has about 5,700 records, and both followers have all of them. <code>HighWatermark</code> means the same as in module 04, with "majority" in place of "in-sync set".</p>
+
+  <h3>Step 2. Read the identity files</h3>
+  <div class="code"><pre><code>docker exec kafka-1 cat /tmp/kraft-combined-logs/meta.properties
+docker exec kafka-1 cat /tmp/kraft-combined-logs/__cluster_metadata-0/quorum-state</code></pre></div>
+  <pre class="out">cluster.id=4L6g3nShT-eMCtK--X86sw
+directory.id=3uiEyBOPVNJZjvqFZCMIdA
+node.id=1
+version=1
+
+{"clusterId":"","leaderId":1,"leaderEpoch":3,"votedId":1,
+ "currentVoters":[{"voterId":1},{"voterId":2},{"voterId":3}],"data_version":0}</pre>
+  <p>The second file is this node's memory of the election: the current epoch, the leader, and whom it voted for. It is written to disk so that a restart cannot make the node vote twice in one epoch.</p>
+
+  <h3>Step 3. Read the metadata log</h3>
+  <p>The flag is <code>--cluster-metadata-decoder</code>. Count the record types, then look at single records.</p>
+  <div class="code"><pre><code>dump() { docker exec kafka-2 /opt/kafka/bin/kafka-dump-log.sh --cluster-metadata-decoder \
+  --files /tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log; }
+dump | grep -o '"type":"[A-Z_]*"' | sort | uniq -c | sort -rn | head
+dump | grep -m1 'TOPIC_RECORD' | grep -o 'payload: .*'
+dump | grep -m1 '"PARTITION_RECORD"' | grep -o 'payload: .*'
+dump | grep -m1 'PARTITION_CHANGE_RECORD' | grep -o 'payload: .*'</code></pre></div>
+  <pre class="out">4731 "type":"NO_OP_RECORD"
+1533 "type":"PARTITION_CHANGE_RECORD"
+  79 "type":"PARTITION_RECORD"
+  51 "type":"BROKER_REGISTRATION_CHANGE_RECORD"
+  23 "type":"CONFIG_RECORD"
+  19 "type":"TOPIC_RECORD"
+
+payload: {"type":"TOPIC_RECORD","version":0,"data":{"name":"orders","topicId":"mocIQ-cjTlOVeEC3U3NxRQ"}}
+
+payload: {"type":"PARTITION_RECORD","version":2,"data":{"partitionId":0,"topicId":"mocIQ-cjTlOVeEC3U3NxRQ",
+  "replicas":[2,3,1],"isr":[2,3,1],"removingReplicas":[],"addingReplicas":[],"leader":2,"leaderEpoch":0,
+  "partitionEpoch":0,"directories":[…]}}
+
+payload: {"type":"PARTITION_CHANGE_RECORD","version":2,"data":{"partitionId":0,"topicId":"dEFhkuV0…","isr":[2,1]}}</pre>
+  <p>This is the <code>orders</code> topic from module 01, as the controller recorded it: first the topic, then each partition with its replicas and leader. The last record is an in-sync set that shrank to 2 and 1 when broker 3 was stopped in an earlier lab. A change record holds only the fields that changed.</p>
+
+  <h3>Step 4. Stop the active controller</h3>
+  <p>Node 1 is the leader, so run the tools from node 2.</p>
+  <div class="code"><pre><code>docker stop kafka-1
+docker exec -i kafka-2 /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server kafka-2:19092 describe --status
+docker exec -i kafka-2 /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server kafka-2:19092 describe --replication
+docker exec -i kafka-2 /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-2:19092 \
+  --create --topic during-failover --partitions 1 --replication-factor 2</code></pre></div>
+  <pre class="out">LeaderId: 2   LeaderEpoch: 4            ← about 1 second after the stop
+
+NodeId  LogEndOffset  Lag   Status
+2       5875          0     Leader
+1       -1            5876  Follower
+3       5875          0     Follower
+
+Created topic during-failover.</pre>
+  <p>Node 2 is the new active controller, in a new epoch. Two of three controllers run, which is a majority, so the cluster accepted a new topic.</p>
+
+  <h3>Step 5. Lose the majority</h3>
+  <div class="code"><pre><code>docker stop kafka-3
+docker exec -i kafka-2 timeout 12 /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-2:19092 \
+  --describe --topic during-failover
+docker exec -i kafka-2 timeout 14 /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-2:19092 \
+  --create --topic no-quorum --partitions 1 --replication-factor 1
+docker logs --since 20s kafka-2 2>&1 | grep -i 'election' | tail -1</code></pre></div>
+  <pre class="out">(no output: both commands ran into the time limit)
+
+INFO [RaftManager id=2] Election timed out before receiving sufficient vote responses to become candidate. …</pre>
+  <p>One controller of three cannot elect itself. It keeps asking for votes that nobody answers. Even reading a topic's description did not work, because the tool asks the cluster for current metadata.</p>
+
+  <h3>Step 6. Restore</h3>
+  <div class="code"><pre><code>docker start kafka-1 kafka-3
+# wait 20 seconds
+k kafka-metadata-quorum.sh --bootstrap-server $B describe --status</code></pre></div>
+  <pre class="out">LeaderId:        2
+LeaderEpoch:     6
+MaxFollowerLag:  0</pre>
+  <p>Node 2 is leader again, now in epoch 6: the failed election attempts each used an epoch. The two returning nodes copied the records they had missed.</p>
+
+  <h3>Step 7. See which brokers are registered</h3>
+  <div class="code"><pre><code>k kafka-broker-api-versions.sh --bootstrap-server $B | grep '^kafka-'
+k kafka-features.sh --bootstrap-server $B describe</code></pre></div>
+  <pre class="out">kafka-2:19092 (id: 2 rack: null isFenced: false) -> (
+kafka-1:19092 (id: 1 rack: null isFenced: false) -> (
+kafka-3:19092 (id: 3 rack: null isFenced: false) -> (
+
+Feature: eligible.leader.replicas.version  SupportedMinVersion: 0  SupportedMaxVersion: 1  FinalizedVersionLevel: 1
+Feature: metadata.version                  SupportedMinVersion: 3.3-IV3  SupportedMaxVersion: 4.3-IV0  …</pre>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Kafka needs ZooKeeper.</td><td>Not since Kafka 4.0. Guides that start ZooKeeper are for old versions.</td></tr>
+        <tr><td>The controller handles client traffic.</td><td>Producers and consumers talk only to brokers. The controller handles metadata.</td></tr>
+        <tr><td>Two controllers are safer than one.</td><td>Two need both to form a majority, so they survive no failure and have two things that can fail. Use three.</td></tr>
+        <tr><td>If the controllers are down, Kafka is down.</td><td>Existing leaders keep working. What stops is every change: elections, new topics, settings.</td></tr>
+        <tr><td>Partition data also uses majority voting.</td><td>Only metadata does. Partition data uses the in-sync set from module 04.</td></tr>
+        <tr><td>Combined mode is fine for production because it saves servers.</td><td>It ties the quorum's health to broker load. Use dedicated controllers.</td></tr>
+        <tr><td>Upgrading the software upgrades the cluster.</td><td>New formats start only when you raise <code>metadata.version</code>. Until then you can still roll back the software.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>Why did Kafka replace ZooKeeper?</summary><div class="answer">
+    <p>Three reasons. Operations: one system to deploy, secure, monitor and upgrade in place of two. Scale: with ZooKeeper, a new controller had to load all metadata before it could act, which took minutes on large clusters; a KRaft controller already has the log in memory and takes over in about a second. Correctness: the old design had two sources of truth, ZooKeeper and the controller's memory, that could disagree; a single ordered log removes that class of bug.</p>
+  </div></details>
+
+  <details class="qa"><summary>Where do you place three controllers in a cloud region with three zones? With two zones?</summary><div class="answer">
+    <p>Three zones: one controller in each. Any one zone can fail and a majority remains.</p>
+    <p>Two zones: there is no good answer. One zone must hold two controllers, and losing that zone loses the majority. Either add a third location only for a controller, which is small and cheap, or accept that one specific zone failure stops metadata changes and write the manual recovery steps in advance.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you upgrade a KRaft cluster safely?</summary><div class="answer">
+    <p>Read the upgrade notes for the target version first. Upgrade the software one server at a time: controllers first, the active controller last among them, then brokers, each time waiting for the server to catch up and for under-replicated partitions to return to zero. Run on the new software with the old <code>metadata.version</code> for a while. Only then raise the version with <code>kafka-features.sh upgrade</code>.</p>
+    <p>The first part can be rolled back by installing the old software. Lowering the metadata version afterwards is limited, so treat that step as the point of no return. <span class="tag-unverified">unverified: the order and downgrade limits are from memory</span></p>
+  </div></details>
+
+  <details class="qa"><summary>What limits the number of partitions in one cluster?</summary><div class="answer">
+    <p>Each partition is metadata the controller must hold in memory, write records for, and send to every broker. Each replica is open files and memory on a broker. When a broker fails, the controller writes a change for every partition that broker touched, and the brokers apply them.</p>
+    <p>KRaft raised the practical limit a great deal compared with ZooKeeper, because failover no longer reloads everything. But failover time and broker start time still grow with the count. Test with your own numbers before you rely on a published limit.</p>
+  </div></details>
+
+  <details class="qa"><summary>What do you monitor on the controllers?</summary><div class="answer">
+    <p>That exactly one active controller exists. The quorum's leader epoch: a rising number means elections. The lag of each voter behind the leader. The rate of metadata records and the time to apply them. The count of fenced brokers. And disk space and latency on the metadata log directory, because a slow disk there slows every decision.</p>
+  </div></details>
+
+  <details class="qa"><summary>A broker is alive but cut off from the controllers. Can it cause damage?</summary><div class="answer">
+    <p>It keeps believing it leads its partitions. The controller fences it after 9 seconds and elects new leaders, with a higher leader epoch for each partition.</p>
+    <p>Producers with <code>acks=all</code> are protected: the cut-off broker cannot get its followers to confirm, so it cannot acknowledge. When it returns, it sees the higher epoch and truncates what it wrote alone. Producers with <code>acks=1</code> that can still reach it will get "success" for records that are later cut off. This is one more reason to use <code>acks=all</code>.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. What does the active controller do?</summary><div class="answer"><p>It makes every metadata decision, such as leader elections and topic creation, and writes each one to the metadata log.</p></div></details>
+  <details class="qa"><summary>2. How many of five controllers can fail before metadata changes stop?</summary><div class="answer"><p>Two. Three of five is a majority.</p></div></details>
+  <details class="qa"><summary>3. What is the name of the metadata topic, and how many partitions does it have?</summary><div class="answer"><p><code>__cluster_metadata</code>, with one partition.</p></div></details>
+  <details class="qa"><summary>4. When is a metadata record committed?</summary><div class="answer"><p>When a majority of the controllers have it.</p></div></details>
+  <details class="qa"><summary>5. What is a fenced broker?</summary><div class="answer"><p>A registered broker that the controller does not allow to lead partitions or count in an in-sync set.</p></div></details>
+  <details class="qa"><summary>6. After how long without a heartbeat is a broker fenced, by default?</summary><div class="answer"><p>9 seconds: <code>broker.session.timeout.ms</code>.</p></div></details>
+  <details class="qa"><summary>7. Why does a controller vote only for a candidate whose log is at least as complete as its own?</summary><div class="answer"><p>So that the new leader has every committed record. A majority has each committed record, and a majority must vote for the winner, so at least one voter would refuse a candidate that lacks one.</p></div></details>
+  <details class="qa"><summary>8. What is a metadata snapshot for?</summary><div class="answer"><p>It holds the full state at one offset, so that a server can start from it and old log records can be deleted.</p></div></details>
+  <details class="qa"><summary>9. Which command shows the current active controller?</summary><div class="answer"><p><code>kafka-metadata-quorum.sh describe --status</code>; read <code>LeaderId</code>.</p></div></details>
+  <details class="qa"><summary>10. What is combined mode and where should you use it?</summary><div class="answer"><p>One process that is both broker and controller. Use it for development and tests, not for production.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="04-replication.html">← 04 Replication</a>
+    <a class="btn primary" href="06-transactions.html">06 Transactions →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- quorum demo ----------
+(function () {
+  const holder = document.getElementById('q-nodes');
+  const out = document.getElementById('q-out');
+  const sizeBtns = [...document.querySelectorAll('#q-demo [data-n]')];
+  let up, leader, epoch;
+
+  function init(n) { up = Array(n).fill(true); leader = 0; epoch = 1; draw('All controllers run. Controller 1 is the active controller.'); }
+  function draw(note) {
+    const n = up.length, alive = up.filter(Boolean).length, need = Math.floor(n / 2) + 1;
+    holder.innerHTML = '';
+    up.forEach((isUp, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'node' + (!isUp ? ' dead' : i === leader ? ' leader' : '');
+      b.setAttribute('aria-pressed', String(!isUp));
+      b.innerHTML = '<div class="node-name">controller ' + (i + 1) + '</div><div class="role">'
+        + (!isUp ? 'stopped' : i === leader ? 'active' : 'follower') + '</div><div class="hint2">click to ' + (isUp ? 'stop' : 'start') + '</div>';
+      b.addEventListener('click', () => toggle(i));
+      holder.appendChild(b);
+    });
+    const ok = alive >= need;
+    out.innerHTML = note + '\nRunning: <b>' + alive + ' of ' + n + '</b>. Majority needed: ' + need + '. Epoch: ' + epoch + '.\n'
+      + (ok ? '<b>Metadata can change:</b> elections, new topics and settings all work.'
+            : '<span class="warn">No majority. Nothing in the metadata can change</span> until ' + (need - alive) + ' more controller' + (need - alive === 1 ? '' : 's') + ' return' + (need - alive === 1 ? 's' : '') + '.');
+  }
+  function toggle(i) {
+    const n = up.length, need = Math.floor(n / 2) + 1;
+    up[i] = !up[i];
+    const alive = up.filter(Boolean).length;
+    let note;
+    if (!up[i]) {
+      if (i === leader) {
+        if (alive >= need) { leader = up.indexOf(true); epoch++; note = 'The active controller stopped. The others elected controller ' + (leader + 1) + ' in a new epoch.'; }
+        else { leader = -1; note = 'The active controller stopped. The rest cannot elect a leader.'; }
+      } else if (alive < need) { leader = -1; note = 'Controller ' + (i + 1) + ' stopped. The active controller lost its majority and steps down.'; }
+      else note = 'Controller ' + (i + 1) + ' stopped. The active controller still has a majority.';
+    } else if (leader === -1 && alive >= need) { leader = up.indexOf(true); epoch++; note = 'Controller ' + (i + 1) + ' is back. A majority exists again and elected controller ' + (leader + 1) + '.'; }
+    else note = 'Controller ' + (i + 1) + ' is back and copies the records it missed.';
+    draw(note);
+  }
+  sizeBtns.forEach((b) => b.addEventListener('click', () => {
+    sizeBtns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    init(Number(b.dataset.n));
+  }));
+  init(3);
+})();
+
+// ---------- metadata replay ----------
+(function () {
+  const rec = document.getElementById('rp-rec');
+  const body = document.getElementById('rp-state');
+  const next = document.getElementById('rp-next');
+  const RECORDS = [
+    { text: 'REGISTER_BROKER_RECORD  {"brokerId":1, "endPoints":[…"kafka-1":19092…]}', apply: (s) => { s['brokers'] = '1 (fenced)'; }, why: 'Broker 1 started and registered. A new broker starts fenced.' },
+    { text: 'BROKER_REGISTRATION_CHANGE_RECORD  {"brokerId":1, "fenced":-1}', apply: (s) => { s['brokers'] = '1'; }, why: 'Broker 1 caught up with the metadata log and was unfenced.' },
+    { text: 'TOPIC_RECORD  {"name":"orders", "topicId":"mocIQ-cjTlOVeEC3U3NxRQ"}', apply: (s) => { s['topics'] = 'orders'; }, why: 'The topic exists now, but it has no partitions yet.' },
+    { text: 'PARTITION_RECORD  {"partitionId":0, "replicas":[2,3,1], "isr":[2,3,1], "leader":2, "leaderEpoch":0}', apply: (s) => { s['orders-0 replicas'] = '2, 3, 1'; s['orders-0 in-sync set'] = '2, 3, 1'; s['orders-0 leader'] = '2 (epoch 0)'; }, why: 'Partition 0 is created with its replicas, in-sync set and leader.' },
+    { text: 'PARTITION_CHANGE_RECORD  {"partitionId":0, "isr":[2,1]}', apply: (s) => { s['orders-0 in-sync set'] = '2, 1'; }, why: 'Broker 3 fell out of sync. The record holds only the field that changed.' },
+    { text: 'PARTITION_CHANGE_RECORD  {"partitionId":0, "isr":[1], "leader":1}', apply: (s) => { s['orders-0 in-sync set'] = '1'; s['orders-0 leader'] = '1 (epoch 1)'; }, why: 'Broker 2, the leader, stopped. The controller chose broker 1 and raised the leader epoch.' },
+  ];
+  let i, state;
+  function draw(msg) {
+    rec.innerHTML = msg;
+    body.innerHTML = '';
+    const keys = Object.keys(state);
+    if (!keys.length) { body.innerHTML = '<tr><td>(empty)</td><td>No records applied yet.</td></tr>'; return; }
+    keys.forEach((k) => { const tr = document.createElement('tr'); tr.innerHTML = '<td>' + k + '</td><td>' + state[k] + '</td>'; body.appendChild(tr); });
+  }
+  function reset() { i = 0; state = {}; next.disabled = false; draw('Offset 0 of the metadata log. Press "Apply next record".'); }
+  next.addEventListener('click', () => {
+    const r = RECORDS[i];
+    r.apply(state);
+    draw('offset ' + i + ':  ' + r.text + '\n<b>' + r.why + '</b>');
+    i++;
+    if (i === RECORDS.length) next.disabled = true;
+  });
+  document.getElementById('rp-reset').addEventListener('click', reset);
+  reset();
+})();
+
+// ---------- broker lifecycle ----------
+(function () {
+  const stages = [...document.querySelectorAll('#lf-stages .stage')];
+  const out = document.getElementById('lf-out');
+  const next = document.getElementById('lf-next');
+  const TEXT = [
+    'The process starts. It reads meta.properties and checks that the cluster id and node id match its configuration. If they do not, it stops.',
+    'It sends a registration to the active controller. The controller writes REGISTER_BROKER_RECORD and gives the broker a broker epoch, a number that identifies this run of the process. The broker is <span class="warn">fenced</span>: it leads nothing.',
+    'It fetches the metadata log and replays it, so that it knows every topic, partition and setting. It tells the controller how far it has read.',
+    'When it has caught up, the controller writes a change record that <b>unfences</b> it. From now on it can be elected leader and counted in in-sync sets.',
+    'Every 2 seconds it sends a heartbeat to the active controller (broker.heartbeat.interval.ms). This is separate from client traffic.',
+    'A clean stop: the broker asks the controller to move its leaderships away first, then exits. A crash or a network cut: after 9 seconds without a heartbeat (broker.session.timeout.ms) the controller <span class="warn">fences</span> it and elects new leaders.',
+  ];
+  let i;
+  function show() {
+    stages.forEach((s, n) => s.classList.toggle('on', n === i));
+    out.innerHTML = 'Stage ' + (i + 1) + ' of 6. ' + TEXT[i];
+    next.disabled = i === TEXT.length - 1;
+  }
+  next.addEventListener('click', () => { if (i < TEXT.length - 1) { i++; show(); } });
+  document.getElementById('lf-reset').addEventListener('click', () => { i = 0; show(); });
+  i = 0; show();
+})();
+</script>
+<script src="extras/05.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

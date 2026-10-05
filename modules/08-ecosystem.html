@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>08 Ecosystem · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .cell.small { min-width: 38px; height: 38px; font-size: .8rem; }
+  .cell.safe { background: var(--read-soft); border-color: var(--read); }
+  .verdict { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin-top: 1rem; }
+  @media (max-width: 560px) { .verdict { grid-template-columns: 1fr; } }
+  .verdict .stat.ok { border-color: var(--read); background: var(--read-soft); }
+  .verdict .stat.no { border-color: var(--gone); background: var(--gone-soft); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } }
+  .two h4 { margin: 0 0 .4rem; font: 600 .82rem var(--mono); color: var(--muted); }
+  .kv { font: 500 .88rem var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; min-height: 4.5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 08 Ecosystem</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 08 · Day 6 · Kafka 4.3</div>
+  <h1>Ecosystem</h1>
+  <p class="lede">Kafka stores bytes. Real systems need more: an agreement on what the bytes mean, a way to move data in and out of databases without writing code, and a plan for records that cannot be processed. This module covers the tools and patterns for those three needs.</p>
+
+  <div class="lab-panel" id="sc-demo" style="margin:0">
+    <h3>Try it: is this schema change safe?</h3>
+    <p class="hint">A schema describes the fields of a record. Pick a change to the <code>Order</code> schema and see which compatibility rules accept it. The lab runs three of these against a real schema registry.</p>
+    <div class="controls">
+      <label for="sc-change">Change</label>
+      <select id="sc-change">
+        <option value="addDef">Add a field with a default value</option>
+        <option value="addNo">Add a field without a default value</option>
+        <option value="delNo">Remove a field that has no default value</option>
+        <option value="delDef">Remove a field that has a default value</option>
+        <option value="rename">Rename a field</option>
+        <option value="type">Change a field from text to number</option>
+      </select>
+    </div>
+    <div class="verdict" id="sc-verdict"></div>
+    <div class="readout" id="sc-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>Brokers do not look inside records. To them a key and a value are two arrays of bytes. This keeps Kafka fast and general, and it leaves three problems to you.</p>
+  <ul>
+    <li><strong>Meaning.</strong> A producer team changes a field and every consumer breaks. A <strong>schema registry</strong> stores the agreed shape of each topic's records and refuses changes that would break readers.</li>
+    <li><strong>Integration.</strong> Most data starts in a database and ends in a database, a search index or a warehouse. <strong>Kafka Connect</strong> is a framework, part of Apache Kafka, that runs ready-made <strong>connectors</strong> for those systems, so that you configure a pipeline and do not program it.</li>
+    <li><strong>Consistency and failure.</strong> A service must change its database and publish an event, and both must happen or neither. And some records will always fail in processing. The <strong>outbox pattern</strong>, <strong>change data capture</strong> and <strong>dead-letter topics</strong> are the standard answers.</li>
+  </ul>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> A schema registry guards what records mean, Kafka Connect moves data in and out without custom code, and a few well-known patterns handle the cases where a database and Kafka must agree or a record cannot be processed.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+
+    <h3>A schema is a contract with versions</h3>
+    <p>Producers and consumers of a topic are released at different times. For a while, new producers write data that old consumers read, or new consumers read data that old producers wrote. A schema change is safe only if it works in the mixed state. The registry checks this for you with a <strong>compatibility mode</strong>.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mode</th><th>Guarantee</th><th>Who upgrades first</th><th>Allowed changes</th></tr></thead>
+        <tbody>
+          <tr><td><code>BACKWARD</code> (the default)</td><td>Consumers with the new schema can read data written with the previous one.</td><td>Consumers</td><td>Remove fields. Add fields that have a default.</td></tr>
+          <tr><td><code>FORWARD</code></td><td>Consumers with the previous schema can read data written with the new one.</td><td>Producers</td><td>Add fields. Remove fields that have a default.</td></tr>
+          <tr><td><code>FULL</code></td><td>Both of the above.</td><td>Any order</td><td>Add or remove only fields that have a default.</td></tr>
+          <tr><td><code>NONE</code></td><td>No check.</td><td>—</td><td>Anything. You carry the risk.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Each mode checks against the latest version only. The variants with <code>_TRANSITIVE</code> in the name check against every earlier version, which matters when consumers replay old data.</p>
+
+    <h3>Connect is a pipeline you configure</h3>
+  </div>
+
+  <figure class="figure wide reveal">
+    <div class="pipeline">
+      <div class="stage"><b>Source system</b>A database, a file, an application interface.</div>
+      <div class="stage"><b>Source connector</b>Reads the system and produces records.</div>
+      <div class="stage"><b>Transforms</b>Optional small changes to each record.</div>
+      <div class="stage"><b>Converter</b>Turns the record into bytes, and back.</div>
+      <div class="stage"><b>Kafka topic</b></div>
+      <div class="stage"><b>Sink connector</b>Consumes records and writes them to the target.</div>
+    </div>
+    <figcaption>A <strong>worker</strong> is the process that runs connectors. A connector splits its job into <strong>tasks</strong>, and workers share the tasks. A sink connector is a consumer group; a source connector tracks its own position in the source system.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Two writes that must agree</h3>
+    <p>A service saves an order in its database and publishes "order created" to Kafka. These are two systems. If the service crashes between the two writes, one happened and the other did not. This is the <strong>dual write problem</strong>. Step through the failure and the fix:</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="ob-demo">
+    <h3>Step through it: dual write and the outbox</h3>
+    <div class="controls">
+      <span id="ob-lbl">Design</span>
+      <div class="seg" role="group" aria-labelledby="ob-lbl">
+        <button type="button" data-ob="dual" aria-pressed="false">Write to both</button>
+        <button type="button" data-ob="outbox" aria-pressed="true">Outbox table</button>
+      </div>
+      <button class="btn primary" type="button" id="ob-run">Run with a crash</button>
+    </div>
+    <div class="two">
+      <div><h4>database</h4><div class="kv" id="ob-db"></div></div>
+      <div><h4>kafka topic</h4><div class="kv" id="ob-kafka"></div></div>
+    </div>
+    <div class="readout" id="ob-msg" aria-live="polite">Choose a design and press the button.</div>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>Schema registry</h3>
+    <p>A schema registry is a separate service. It is not part of Apache Kafka; the most used one is from Confluent, and others exist. It stores its data in a compacted Kafka topic, <code>_schemas</code>, so it has no database of its own.</p>
+    <ol class="steps">
+      <li class="on">Schemas are grouped under a <strong>subject</strong>. By default the subject is the topic name plus <code>-value</code> or <code>-key</code>.</li>
+      <li class="on">The producer's serializer sends the record's schema to the registry. If it is new, the registry checks it against the subject's compatibility mode. If it passes, it gets a version number and a global <strong>schema id</strong>.</li>
+      <li class="on">The serializer writes the schema id in front of the record's bytes. The schema itself is not sent with each record.</li>
+      <li class="on">The consumer's deserializer reads the id, fetches that schema from the registry once, caches it, and decodes the record.</li>
+    </ol>
+    <p>Three formats are common: Avro, Protobuf and JSON Schema. Avro and Protobuf produce small binary records and have clear rules for adding and removing fields.</p>
+
+    <h3>Kafka Connect</h3>
+    <p>Connect runs in two modes. <strong>Standalone</strong> is one process with configuration in files, for tests. <strong>Distributed</strong> is a group of workers that you control through an HTTP interface on port 8083. Use distributed mode for anything real.</p>
+    <p>A distributed worker group keeps all its state in three Kafka topics:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Topic setting</th><th>Holds</th></tr></thead>
+        <tbody>
+          <tr><td><code>config.storage.topic</code></td><td>Every connector's configuration.</td></tr>
+          <tr><td><code>offset.storage.topic</code></td><td>How far each source connector has read in its source system.</td></tr>
+          <tr><td><code>status.storage.topic</code></td><td>The state of each connector and task.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Workers with the same <code>group.id</code> form one cluster. If a worker stops, its tasks move to the others, in the same way that partitions move in a consumer group.</p>
+    <p>A <strong>converter</strong> decides the byte format in the topic: plain text, JSON, or Avro with a schema registry. A <strong>transform</strong> makes a small change to each record, such as renaming a field or routing to a different topic. Keep transforms simple; real processing belongs in Kafka Streams.</p>
+
+    <h3>Errors in Connect</h3>
+    <p>By default one bad record stops a task: <code>errors.tolerance=none</code>. With <code>errors.tolerance=all</code>, the task skips records that fail in the converter or a transform. For a sink connector you can name a <strong>dead-letter topic</strong>. The failed record is written there unchanged, with headers that say what failed and where. The lab shows both behaviours.</p>
+
+    <h3>Change data capture</h3>
+    <p>A database already keeps an ordered log of every change, for its own recovery and replication. <strong>Change data capture</strong> reads that log and publishes each insert, update and delete as a record. The best-known tool is Debezium, a set of source connectors for Kafka Connect.</p>
+    <ul>
+      <li>It first takes a <strong>snapshot</strong> of the existing rows, then follows the log.</li>
+      <li>Each record carries the row before and after the change and the type of operation.</li>
+      <li>It sees every change in commit order, including changes made by other applications and by hand.</li>
+      <li>It adds little load, because it reads the log and does not query the tables.</li>
+    </ul>
+    <p class="note warn">Module 13 runs Debezium against PostgreSQL: it shows the snapshot, the insert, update and delete records, and an outbox with a rolled-back transaction.</p>
+
+    <h3>The outbox pattern</h3>
+    <p>The service writes its business change and an event row into the same database, in one database transaction. The event row goes into an <strong>outbox table</strong>. A change data capture connector reads new outbox rows from the database log and publishes them to Kafka. The database transaction makes the two writes atomic. The connector delivers each event at least once, so consumers must ignore repeats by event id.</p>
+
+    <h3>Dead-letter topics in your own consumers</h3>
+    <p>The same idea applies outside Connect. When your consumer cannot process a record after its retries, it writes the record to a separate topic with the error and the original topic, partition and offset, then commits and continues. Someone, or something, must then read that topic: alert on it, fix the cause, and replay.</p>
+    <p>Two cautions. Moving a record aside breaks ordering for its key: later records for that key may be processed before it is replayed. And an error that affects every record, such as a database that is down, should stop the consumer, not send everything to the dead-letter topic.</p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>Connect defaults come from the Kafka 4.3 Connect configuration reference. Where that page gave no value, the cell says so.</p>
+    <h3>Connect worker</h3>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Worker config</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>bootstrap.servers</code></td><td>required</td><td>Broker addresses.</td><td>—</td></tr>
+        <tr><td><code>group.id</code></td><td>required</td><td>Names the worker cluster. Workers with the same value work together.</td><td>One value for each Connect cluster. It must differ from every consumer group id.</td></tr>
+        <tr><td><code>key.converter</code>, <code>value.converter</code></td><td>required</td><td>The byte format of keys and values in topics.</td><td>Set a cluster default here and override it for a connector when needed.</td></tr>
+        <tr><td><code>header.converter</code></td><td><code>SimpleHeaderConverter</code></td><td>The format of record headers.</td><td>Rarely.</td></tr>
+        <tr><td><code>config.storage.topic</code>, <code>offset.storage.topic</code>, <code>status.storage.topic</code></td><td>required</td><td>The three internal topics.</td><td>Unique names for each Connect cluster.</td></tr>
+        <tr><td><code>config.storage.replication.factor</code>, <code>offset.storage.replication.factor</code>, <code>status.storage.replication.factor</code></td><td>3</td><td>Copies of those topics.</td><td>Keep 3.</td></tr>
+        <tr><td><code>offset.storage.partitions</code>, <code>status.storage.partitions</code></td><td>25, 5</td><td>Partition counts of two internal topics. The config topic always has one.</td><td>Rarely.</td></tr>
+        <tr><td><code>plugin.path</code></td><td>null</td><td>Where connector files are found.</td><td>Always set. The lab points it at the file connector that ships with Kafka.</td></tr>
+        <tr><td><code>listeners</code></td><td><code>http://:8083</code></td><td>Address of the HTTP interface.</td><td>Protect it. Anyone who can reach it can create connectors.</td></tr>
+        <tr><td><code>offset.flush.interval.ms</code></td><td>60000 (1 minute)</td><td>How often source positions are saved.</td><td>Lower it to repeat less after a crash.</td></tr>
+        <tr><td><code>exactly.once.source.support</code></td><td><code>disabled</code></td><td>Lets source connectors write records and their source position in one transaction.</td><td>Turn on when a source connector supports it and duplicates matter.</td></tr>
+        <tr><td><code>connector.client.config.override.policy</code></td><td><code>All</code></td><td>Whether a connector may override producer and consumer settings.</td><td>Restrict it on a shared Connect cluster.</td></tr>
+        <tr><td><code>scheduled.rebalance.max.delay.ms</code></td><td>300000 (5 minutes)</td><td>How long the tasks of a worker that left wait for it to return before they move.</td><td>Lower for faster failover; higher to avoid moves during a rolling restart.</td></tr>
+        <tr><td><code>task.shutdown.graceful.timeout.ms</code></td><td>5000</td><td>Time given to tasks to stop cleanly.</td><td>Rarely.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col"><h3>Each connector</h3></div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Connector config</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>connector.class</code></td><td>required</td><td>Which connector to run.</td><td>—</td></tr>
+        <tr><td><code>tasks.max</code></td><td>1</td><td>The most tasks the connector may create.</td><td>Raise for parallel work. A sink cannot use more tasks than partitions.</td></tr>
+        <tr><td><code>topics</code> (sink)</td><td>required for sinks</td><td>The topics to consume.</td><td>—</td></tr>
+        <tr><td><code>transforms</code>, <code>predicates</code></td><td>empty</td><td>A list of small changes to apply, and conditions for them.</td><td>For renames, routing, masking a field.</td></tr>
+        <tr><td><code>errors.tolerance</code></td><td><code>none</code></td><td><code>all</code> skips records that fail in conversion or transforms.</td><td>Use <code>all</code> only together with a dead-letter topic or error logging.</td></tr>
+        <tr><td><code>errors.deadletterqueue.topic.name</code></td><td>no value given in the reference page; empty in practice</td><td>Sink connectors only: where failed records go.</td><td>Set it whenever tolerance is <code>all</code>.</td></tr>
+        <tr><td><code>errors.deadletterqueue.context.headers.enable</code></td><td>no value given in the reference page; off in the lab until set</td><td>Adds headers with the error and the original position.</td><td>Turn on. Without it you cannot tell why a record failed.</td></tr>
+        <tr><td><code>errors.retry.timeout</code>, <code>errors.retry.delay.max.ms</code></td><td>0, 60000</td><td>How long to retry a failed operation, and the longest pause between tries.</td><td>Raise the first for target systems that are briefly unavailable.</td></tr>
+        <tr><td><code>errors.log.enable</code>, <code>errors.log.include.messages</code></td><td><code>false</code>, <code>false</code></td><td>Writes failures to the worker log, with or without record content.</td><td>Turn on the first. Think about private data before the second.</td></tr>
+        <tr><td><code>exactly.once.support</code>, <code>transaction.boundary</code> (source)</td><td><code>requested</code>, <code>poll</code></td><td>Exactly-once settings for a source connector.</td><td>With <code>exactly.once.source.support</code> on the worker.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col"><h3>Schema registry and its serializers</h3></div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Setting</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td>Compatibility level (global or for one subject)</td><td><code>BACKWARD</code> (read from the lab registry)</td><td>The rule for new schema versions.</td><td>Use <code>FULL</code> or a transitive variant for topics with many independent consumers or long retention.</td></tr>
+        <tr><td>Storage topic</td><td><code>_schemas</code>, one partition, compacted (seen in the lab)</td><td>Where the registry keeps everything.</td><td>Protect it. If it is lost, no consumer can decode old records.</td></tr>
+        <tr><td><code>schema.registry.url</code> (client)</td><td>required</td><td>Where serializers find the registry.</td><td>—</td></tr>
+        <tr><td><code>auto.register.schemas</code> (client)</td><td><code>true</code></td><td>Lets a producer register a new schema at run time.</td><td>Set <code>false</code> in production and register schemas in the build pipeline, so that a schema change is reviewed. <span class="tag-unverified">unverified default</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>A schema change breaks consumers</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Consumers throw on every record, or silently read wrong values.</dd>
+      <dt>Cause</dt><dd>No registry, or compatibility set to <code>NONE</code>, or a field was renamed or its type changed.</dd>
+      <dt>Fix</dt><dd>Check compatibility in the build pipeline before a release, with the registry's test call. To rename or retype a field, add a new field, move readers and writers over, then remove the old one.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The registry is unavailable</h3>
+    <dl>
+      <dt>What breaks</dt><dd>New producers and consumers cannot start, and any client that meets a schema id it has not cached fails. Clients that already have their schemas in memory keep working.</dd>
+      <dt>Fix</dt><dd>Run more than one registry instance. Treat it as a critical dependency of every client.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A connector task fails on one record</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The task stops. Nothing after that record is delivered. The connector itself still reports "running".</dd>
+      <dt>You observe</dt><dd>In the lab: connector state <code>RUNNING</code>, task state <code>FAILED</code>, with the trace "Tolerance exceeded in error handler". The output file stayed empty although two of the three records were good.</dd>
+      <dt>Fix</dt><dd>Monitor task states, not only connector states. Decide on tolerance and a dead-letter topic for each connector. Restart a failed task through the HTTP interface after fixing the cause.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The dead-letter topic fills and nobody looks</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Records are "handled" by moving them aside, and are lost in practice.</dd>
+      <dt>Fix</dt><dd>Alert on any record arriving in a dead-letter topic. Give the topic an owner and a replay procedure. Set its retention long enough to act.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Dual write leaves the database and Kafka different</h3>
+    <dl>
+      <dt>What breaks</dt><dd>An order exists with no event, or an event exists for an order that was rolled back.</dd>
+      <dt>Cause</dt><dd>Two separate writes with a crash, a timeout or an error between them.</dd>
+      <dt>Fix</dt><dd>The outbox pattern, or change data capture on the business tables directly.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A stopped capture connector fills the database disk</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The database keeps its change log until the connector confirms it has read it. If the connector is down for long, the log grows until the disk is full and the database stops.</dd>
+      <dt>Fix</dt><dd>Alert on the connector's lag behind the database log and on the size of the retained log. Have a procedure to drop the connector's position in an emergency and take a new snapshot. Module 13 measured this: a stopped connector left its replication slot behind by 8.6 MB after 60,000 rows.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A source connector repeats records after a crash</h3>
+    <dl>
+      <dt>Cause</dt><dd>Source positions are saved every <code>offset.flush.interval.ms</code>, 1 minute. Records sent after the last save are sent again.</dd>
+      <dt>Fix</dt><dd>Make consumers ignore repeats, or turn on exactly-once source support if the connector allows it.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against the lab cluster. Part A uses Kafka Connect, which is inside the Kafka image. Part B uses a schema registry container that I added to <code>docker-compose.yml</code>; it listens on port 8086 of your machine.</p>
+  </div>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092</code></pre></div>
+
+  <h3>Part A, step 1. Start a Connect worker</h3>
+  <div class="code"><pre><code>docker exec kafka-1 sh -c 'cat > /tmp/connect.properties &lt;&lt;EOF
+bootstrap.servers=kafka-1:19092
+group.id=connect-lab
+key.converter=org.apache.kafka.connect.storage.StringConverter
+value.converter=org.apache.kafka.connect.storage.StringConverter
+offset.storage.topic=connect-offsets
+config.storage.topic=connect-configs
+status.storage.topic=connect-status
+plugin.path=/opt/kafka/libs/connect-file-4.3.1.jar
+listeners=http://0.0.0.0:8083
+EOF'
+docker exec -d kafka-1 sh -c '/opt/kafka/bin/connect-distributed.sh /tmp/connect.properties > /tmp/connect.log 2>&1'
+
+# the image has wget but not curl; define two helpers for the HTTP interface
+get()  { docker exec kafka-1 wget -q -O - "http://localhost:8083$1"; }
+post() { docker exec kafka-1 wget -q -O - --header 'Content-Type: application/json' --post-data "$2" "http://localhost:8083$1"; }
+
+# wait about 20 seconds
+get /
+get /connector-plugins
+k kafka-topics.sh --bootstrap-server $B --list | grep connect</code></pre></div>
+  <pre class="out">{"version":"4.3.1","commit":"26b251a451ce941d","kafka_cluster_id":"4L6g3nShT-eMCtK--X86sw"}
+
+FileStreamSinkConnector (sink), FileStreamSourceConnector (source),
+MirrorCheckpointConnector, MirrorHeartbeatConnector, MirrorSourceConnector
+
+connect-configs
+connect-offsets
+connect-status</pre>
+
+  <h3>Part A, step 2. File to topic to file</h3>
+  <div class="code"><pre><code>docker exec kafka-1 sh -c 'printf "line one\nline two\n" > /tmp/in.txt'
+
+post /connectors '{"name":"file-source","config":{"connector.class":"org.apache.kafka.connect.file.FileStreamSourceConnector","tasks.max":"1","file":"/tmp/in.txt","topic":"connect-lines"}}'
+post /connectors '{"name":"file-sink","config":{"connector.class":"org.apache.kafka.connect.file.FileStreamSinkConnector","tasks.max":"1","file":"/tmp/out.txt","topics":"connect-lines"}}'
+
+# wait 8 seconds, then add a line while the connectors run
+docker exec kafka-1 sh -c 'echo "line three" >> /tmp/in.txt'
+# wait 6 seconds
+docker exec kafka-1 cat /tmp/out.txt
+get /connectors
+get /connectors/file-source/status
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group connect-file-sink</code></pre></div>
+  <pre class="out">line one
+line two
+line three
+
+["file-source","file-sink"]
+{"name":"file-source","connector":{"state":"RUNNING",…},"tasks":[{"id":0,"state":"RUNNING",…}],"type":"source"}
+
+GROUP              TOPIC          PARTITION  LOG-END-OFFSET
+connect-file-sink  connect-lines  0          3</pre>
+  <p>No code was written. The third line appeared in the output file a few seconds after it was added to the input file. The sink connector is a consumer group named <code>connect-</code> plus its name, so the lag tools from module 03 work on it.</p>
+
+  <h3>Part A, step 3. One bad record, no tolerance</h3>
+  <p>Put three records in a topic. The middle one is not JSON. Start a sink that expects JSON.</p>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic json-in --partitions 1 --replication-factor 3
+printf '{"id":1}\nthis is not json\n{"id":2}\n' | k kafka-console-producer.sh --bootstrap-server $B --topic json-in
+
+post /connectors '{"name":"json-strict","config":{"connector.class":"org.apache.kafka.connect.file.FileStreamSinkConnector","tasks.max":"1","file":"/tmp/strict.txt","topics":"json-in","value.converter":"org.apache.kafka.connect.json.JsonConverter","value.converter.schemas.enable":"false"}}'
+# wait 10 seconds
+get /connectors/json-strict/status
+docker exec kafka-1 cat /tmp/strict.txt</code></pre></div>
+  <pre class="out">{"name":"json-strict","connector":{"state":"RUNNING",…},
+ "tasks":[{"id":0,"state":"FAILED",…,"trace":"org.apache.kafka.connect.errors.ConnectException: Tolerance exceeded in error handler …
+
+(strict.txt is empty)</pre>
+  <p>The connector says <code>RUNNING</code> and its task says <code>FAILED</code>. The output file is empty: the two good records were not delivered either.</p>
+
+  <h3>Part A, step 4. The same, with a dead-letter topic</h3>
+  <div class="code"><pre><code>post /connectors '{"name":"json-dlq","config":{"connector.class":"org.apache.kafka.connect.file.FileStreamSinkConnector","tasks.max":"1","file":"/tmp/dlq-ok.txt","topics":"json-in","value.converter":"org.apache.kafka.connect.json.JsonConverter","value.converter.schemas.enable":"false","errors.tolerance":"all","errors.deadletterqueue.topic.name":"json-in-dlq","errors.deadletterqueue.topic.replication.factor":"3","errors.deadletterqueue.context.headers.enable":"true"}}'
+# wait 12 seconds
+get /connectors/json-dlq/status
+docker exec kafka-1 cat /tmp/dlq-ok.txt
+k kafka-console-consumer.sh --bootstrap-server $B --topic json-in-dlq --from-beginning \
+  --formatter-property print.headers=true --timeout-ms 6000</code></pre></div>
+  <pre class="out">{"name":"json-dlq","connector":{"state":"RUNNING",…},"tasks":[{"id":0,"state":"RUNNING",…}],"type":"sink"}
+
+{id=1}
+{id=2}
+
+__connect.errors.topic:json-in,__connect.errors.partition:0,__connect.errors.offset:1,
+__connect.errors.connector.name:json-dlq,__connect.errors.task.id:0,
+__connect.errors.stage:VALUE_CONVERTER,
+__connect.errors.class.name:org.apache.kafka.connect.json.JsonConverter,
+__connect.errors.exception.class.name:org.apache.kafka.connect.errors.DataException,
+__connect.errors.exception.message:Converting byte[] to Kafka Connect data failed due to serialization error: ,
+__connect.errors.exception.stacktrace:… Unrecognized token 'this': was expecting (JSON String, Number, …)
+    this is not json</pre>
+  <p>The task keeps running and both good records are delivered. The bad record is in the dead-letter topic with its original value, and the headers say exactly where it came from (topic <code>json-in</code>, partition 0, offset 1), which stage failed, and why.</p>
+
+  <h3>Part B, step 1. Start the schema registry</h3>
+  <div class="code"><pre><code>docker compose up -d schema-registry
+R=http://localhost:8086
+H='Content-Type: application/vnd.schemaregistry.v1+json'
+curl -s $R/config</code></pre></div>
+  <pre class="out">{"compatibilityLevel":"BACKWARD"}</pre>
+
+  <h3>Part B, step 2. Register a schema and evolve it</h3>
+  <p>Version 1 has <code>id</code> and <code>amount</code>. Version 2 adds <code>currency</code> with a default. Version 3 tries to add <code>customerId</code> without a default.</p>
+  <div class="code"><pre><code>V1='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"amount\",\"type\":\"double\"}]}"}'
+V2='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"amount\",\"type\":\"double\"},{\"name\":\"currency\",\"type\":\"string\",\"default\":\"CAD\"}]}"}'
+V3='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"amount\",\"type\":\"double\"},{\"name\":\"currency\",\"type\":\"string\",\"default\":\"CAD\"},{\"name\":\"customerId\",\"type\":\"string\"}]}"}'
+
+curl -s -X POST -H "$H" -d "$V1" $R/subjects/orders-value/versions
+curl -s -X POST -H "$H" -d "$V2" $R/subjects/orders-value/versions
+curl -s -X POST -H "$H" -d "$V3" $R/subjects/orders-value/versions
+curl -s $R/subjects/orders-value/versions</code></pre></div>
+  <pre class="out">{"id":1,"version":1,…,"schemaType":"AVRO",…}
+{"id":2,"version":2,…}
+{"error_code":40901,"message":"Schema being registered is incompatible with an earlier schema for subject
+ \"orders-value\", details: [{errorType:'READER_FIELD_MISSING_DEFAULT_VALUE', description:'The field
+ 'customerId' at path '/fields/3' in the new schema has no default value and is missing in the old schema' …
+[1,2]</pre>
+  <p>The registry refused version 3. A consumer with the new schema could not read an old record, because the old record has no <code>customerId</code> and the schema gives no default to use.</p>
+
+  <h3>Part B, step 3. Test a change without registering it</h3>
+  <p>Version 4 removes <code>amount</code>. Test it under the default mode, then switch the subject to <code>FULL</code> and test again.</p>
+  <div class="code"><pre><code>V4='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"currency\",\"type\":\"string\",\"default\":\"CAD\"}]}"}'
+curl -s -X POST -H "$H" -d "$V4" "$R/compatibility/subjects/orders-value/versions/latest?verbose=true"
+
+curl -s -X PUT -H "$H" -d '{"compatibility":"FULL"}' $R/config/orders-value
+curl -s -X POST -H "$H" -d "$V4" "$R/compatibility/subjects/orders-value/versions/latest?verbose=true"</code></pre></div>
+  <pre class="out">{"is_compatible":true,"messages":[]}
+
+{"compatibility":"FULL"}
+{"is_compatible":false,"messages":["{errorType:'READER_FIELD_MISSING_DEFAULT_VALUE', description:'The field
+ 'amount' at path '/fields/1' in the old schema has no default value and is missing in the new schema' …</pre>
+  <p>Removing a field is allowed under <code>BACKWARD</code>: new consumers simply ignore it in old data. Under <code>FULL</code> it is refused, because old consumers still expect <code>amount</code> and would find nothing. This test call is what a build pipeline should run before a release.</p>
+
+  <h3>Part B, step 4. See where the registry keeps its data</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --describe --topic _schemas | head -1</code></pre></div>
+  <pre class="out">Topic: _schemas  PartitionCount: 1  ReplicationFactor: 3  Configs: min.insync.replicas=2,cleanup.policy=compact</pre>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Kafka checks the format of records.</td><td>Brokers store bytes. Checks happen in the clients, with a registry.</td></tr>
+        <tr><td>The schema registry is part of Apache Kafka.</td><td>It is a separate product. Kafka Connect is part of Apache Kafka.</td></tr>
+        <tr><td><code>BACKWARD</code> means old consumers keep working.</td><td>It means new consumers can read old data. Old consumers reading new data is <code>FORWARD</code>.</td></tr>
+        <tr><td>JSON needs no schema.</td><td>It has one; it is only unwritten. Unwritten contracts break without warning.</td></tr>
+        <tr><td>A connector in state "running" is healthy.</td><td>Its tasks can be failed. Check task states.</td></tr>
+        <tr><td>A dead-letter topic solves bad records.</td><td>It moves them. Someone must read, fix and replay them.</td></tr>
+        <tr><td>Writing to the database and then to Kafka is safe if I retry.</td><td>A crash between the two leaves them different. Use an outbox or change data capture.</td></tr>
+        <tr><td>Polling a table for new rows is the same as change data capture.</td><td>Polling misses deletes and intermediate updates, and adds query load. Reading the database log does neither.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>Which compatibility mode do you set as the company default?</summary><div class="answer">
+    <p><code>BACKWARD</code> fits the common case where consumers can be upgraded before producers and data is not replayed from far back. For topics with long retention or with consumers that reprocess history, use <code>BACKWARD_TRANSITIVE</code>, because a new consumer must read every old version.</p>
+    <p>For topics that many teams consume, where you cannot make them all upgrade first, <code>FULL_TRANSITIVE</code> is the safe choice: only optional fields can come and go, and any version can read any other.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you make a breaking change to a topic's schema?</summary><div class="answer">
+    <p>You do not change it in place. Create a new topic with the new schema, for example with a version in its name. Produce to both for a time, or run a small job that converts one into the other. Move consumers one by one. Stop the old topic when its last consumer has left and its retention has passed.</p>
+    <p>This is slow on purpose. A topic's schema is a public interface.</p>
+  </div></details>
+
+  <details class="qa"><summary>Outbox table or change data capture on the business tables?</summary><div class="answer">
+    <p>Capture on business tables is quick to start, needs no application change, and publishes the internal table layout. Every consumer then depends on your columns, and a refactoring of the database breaks them.</p>
+    <p>An outbox publishes events you designed, with a stable shape and a business meaning ("order confirmed"), at the cost of writing them in the application. For events that other teams consume, prefer the outbox. For copying data to a warehouse or a cache you own, direct capture is fine.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you run Kafka Connect for many teams?</summary><div class="answer">
+    <p>Decide between one shared cluster and one for each team or workload. Shared is cheaper, but connectors share memory and a bad one can disturb the others, and a rebalance touches all tasks. Separate clusters isolate failures and upgrades.</p>
+    <p>In either case: lock down the HTTP interface, restrict which client settings connectors may override, keep credentials in a secrets provider and out of connector configurations, monitor every task state and sink lag, and manage connector configurations from version control.</p>
+  </div></details>
+
+  <details class="qa"><summary>Design the retry and dead-letter handling for a consumer that calls a payment service.</summary><div class="answer">
+    <p>Separate the errors. A temporary error, such as a timeout, deserves retries with growing pauses. If the payment service is down, pause the consumer; do not push thousands of records aside. A permanent error on one record, such as an invalid field, goes to a dead-letter topic at once with the error and the original position.</p>
+    <p>Then handle order. If payments for one account must stay in order, moving one aside lets later ones overtake it. Either hold all later records for that key until it is resolved, or design the operation so that order does not matter. Finally make the call safe to repeat with a request id, because the consumer delivers at least once.</p>
+  </div></details>
+
+  <details class="qa"><summary>What breaks if the <code>_schemas</code> topic is lost?</summary><div class="answer">
+    <p>Every record written with the registry contains only a schema id. Without the registry's data, nobody can decode records, old or new. Re-registering schemas may give different ids, which does not help for existing data.</p>
+    <p>So treat that topic as critical data: three copies, a backup of its content outside the cluster, and a tested restore that keeps the ids.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. What does a broker know about the content of a record?</summary><div class="answer"><p>Nothing. Keys and values are bytes to it.</p></div></details>
+  <details class="qa"><summary>2. What does <code>BACKWARD</code> compatibility guarantee?</summary><div class="answer"><p>A consumer with the new schema can read data written with the previous schema.</p></div></details>
+  <details class="qa"><summary>3. Under <code>BACKWARD</code>, is "add a field without a default" allowed?</summary><div class="answer"><p>No. The lab registry refused it with <code>READER_FIELD_MISSING_DEFAULT_VALUE</code>.</p></div></details>
+  <details class="qa"><summary>4. What travels with each record when a schema registry is used?</summary><div class="answer"><p>A schema id, not the schema.</p></div></details>
+  <details class="qa"><summary>5. Name the three internal topics of a distributed Connect cluster.</summary><div class="answer"><p>The config, offset and status storage topics.</p></div></details>
+  <details class="qa"><summary>6. What is the difference between a connector and a task?</summary><div class="answer"><p>The connector defines the job and splits it. Tasks do the copying, and workers share them.</p></div></details>
+  <details class="qa"><summary>7. What does <code>errors.tolerance=all</code> do without a dead-letter topic?</summary><div class="answer"><p>It skips records that fail in conversion or transforms, without keeping them.</p></div></details>
+  <details class="qa"><summary>8. What is the dual write problem?</summary><div class="answer"><p>Writing to a database and to Kafka as two separate steps, so that a failure between them leaves the two different.</p></div></details>
+  <details class="qa"><summary>9. How does the outbox pattern solve it?</summary><div class="answer"><p>The event is written to a table in the same database transaction as the business change, and a capture connector publishes it to Kafka afterwards.</p></div></details>
+  <details class="qa"><summary>10. What does change data capture read?</summary><div class="answer"><p>The database's own log of changes.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="07-kafka-streams.html">← 07 Kafka Streams</a>
+    <a class="btn primary" href="09-operations.html">09 Operations →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- schema compatibility demo ----------
+(function () {
+  const sel = document.getElementById('sc-change'), verdict = document.getElementById('sc-verdict'), out = document.getElementById('sc-out');
+  // [BACKWARD, FORWARD, FULL], explanation
+  const RULES = {
+    addDef: [true, true, true, 'A new consumer reading an old record uses the default. An old consumer reading a new record ignores the extra field. Safe in every mode. The lab registered this as version 2.'],
+    addNo: [false, true, false, 'A new consumer reading an old record finds no value and has no default to use. The lab registry refused this under BACKWARD with READER_FIELD_MISSING_DEFAULT_VALUE.'],
+    delNo: [true, false, false, 'A new consumer ignores the field in old records. An old consumer reading a new record expects the field and finds nothing. The lab registry accepted this under BACKWARD and refused it under FULL.'],
+    delDef: [true, true, true, 'An old consumer reading a new record uses the default. Safe in every mode. This is why optional fields with defaults are the easy path.'],
+    rename: [false, false, false, 'To a reader, a rename is one field removed and another added with no default. Add the new field, move everyone over, then remove the old one.'],
+    type: [false, false, false, 'Old and new readers decode the bytes differently. Add a new field with the new type.'],
+  };
+  function draw() {
+    const r = RULES[sel.value];
+    verdict.innerHTML = '';
+    ['BACKWARD', 'FORWARD', 'FULL'].forEach((m, i) => {
+      const d = document.createElement('div');
+      d.className = 'stat ' + (r[i] ? 'ok' : 'no');
+      d.innerHTML = '<b>' + (r[i] ? 'Accepted' : 'Refused') + '</b><span>' + m + '</span>';
+      verdict.appendChild(d);
+    });
+    out.textContent = r[3];
+  }
+  sel.addEventListener('change', draw);
+  draw();
+})();
+
+// ---------- outbox demo ----------
+(function () {
+  const db = document.getElementById('ob-db'), kafka = document.getElementById('ob-kafka'), msg = document.getElementById('ob-msg');
+  const btns = [...document.querySelectorAll('[data-ob]')];
+  let mode = 'outbox', timers = [];
+  function at(step, fn) { timers.push(setTimeout(fn, KB.reducedMotion ? 0 : step * 1300)); }
+  function run() {
+    timers.forEach(clearTimeout); timers = [];
+    db.textContent = '(empty)'; kafka.textContent = '(empty)';
+    const lines = []; const say = (t) => { lines.push(t); msg.innerHTML = lines.join('\n'); };
+    msg.textContent = '';
+    if (mode === 'dual') {
+      at(0, () => { db.textContent = 'orders:  order 17'; say('1. The service saves order 17 in the database and commits.'); });
+      at(1, () => say('2. <span class="warn">Crash</span>, before the event is sent to Kafka.'));
+      at(2, () => say('3. After the restart the service does not know that an event is missing.\n<span class="warn">Result: the order exists, but no other system ever hears about it.</span>\nSending first and saving second has the opposite fault: an event for an order that does not exist.'));
+    } else {
+      at(0, () => { db.textContent = 'orders:  order 17\noutbox:  "order 17 created"'; say('1. In one database transaction the service saves order 17 and an outbox row. Both commit or neither does.'); });
+      at(1, () => say('2. <span class="warn">Crash.</span> Nothing is lost: the outbox row is in the database.'));
+      at(2, () => { kafka.textContent = '"order 17 created"'; say('3. The capture connector reads the outbox row from the database log and publishes it. It was running all the time; it did not need the service.'); });
+      at(3, () => say('<b>Result: the database and Kafka agree.</b> The connector may publish a row twice after its own restart, so consumers ignore repeats by event id.'));
+    }
+  }
+  btns.forEach((b) => b.addEventListener('click', () => { mode = b.dataset.ob; btns.forEach((x) => x.setAttribute('aria-pressed', String(x === b))); }));
+  document.getElementById('ob-run').addEventListener('click', run);
+  db.textContent = '(empty)'; kafka.textContent = '(empty)';
+})();
+</script>
+<script src="extras/08.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

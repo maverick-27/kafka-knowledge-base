@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14 Tiered storage lab · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .tl { display: grid; grid-template-columns: repeat(auto-fill, minmax(2.5rem, 1fr)); gap: 5px; margin: 1rem 0 .5rem; }
+  .tl .cell { min-width: 0; height: 44px; padding: 0; font-size: .78rem; transition: none; }
+  .tl .cell.lo { background: var(--write); color: var(--write-ink); border-color: var(--write); }
+  .tl .cell.lr { background: var(--read-soft); border-color: var(--read); color: var(--ink); }
+  .tl .cell.ro { background: var(--surface-2); border: 2px dashed var(--primary); color: var(--ink); }
+  .tl .cell.de { opacity: .3; background: var(--gone-soft); border-color: var(--gone); text-decoration: line-through; }
+  .tl-note { font-size: .88rem; color: var(--muted); margin: .4rem 0 0; }
+  .controls output { font: 600 .95rem var(--mono); min-width: 3.2rem; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 14 Tiered storage lab</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 14 · Depth lab · Kafka 4.3</div>
+  <h1>Tiered storage lab</h1>
+  <p class="lede">Module 09 described tiered storage but could not run it, because Apache Kafka does not ship the storage plug-in. This lab installs an open-source plug-in, copies real segments to a folder, and shows local data disappear while every record stays readable.</p>
+
+  <div class="lab-panel" id="tl-demo" style="margin:0">
+    <h3>Try it: where does each segment live?</h3>
+    <p class="hint">A model, not a measurement. One segment closes every hour. Move the three sliders and read each segment's state. The letter in each cell repeats its colour.</p>
+    <div class="controls">
+      <label for="tl-now">Now: hour</label>
+      <input type="range" id="tl-now" min="1" max="48" value="30">
+      <output id="tl-now-o" for="tl-now">30</output>
+    </div>
+    <div class="controls">
+      <label for="tl-loc">Local retention (hours)</label>
+      <input type="range" id="tl-loc" min="1" max="24" value="4">
+      <output id="tl-loc-o" for="tl-loc">4</output>
+    </div>
+    <div class="controls">
+      <label for="tl-tot">Total retention (hours)</label>
+      <input type="range" id="tl-tot" min="1" max="72" value="24">
+      <output id="tl-tot-o" for="tl-tot">24</output>
+    </div>
+    <div class="tl" id="tl-cells" role="img" aria-label="Segment states"></div>
+    <div class="legend">
+      <span><i style="background:var(--write)"></i>A: active, local only</span>
+      <span><i style="background:var(--read-soft);border-color:var(--read)"></i>B: local and remote</span>
+      <span><i style="background:var(--surface-2);border:2px dashed var(--primary)"></i>R: remote only</span>
+      <span><i style="background:var(--gone-soft);border-color:var(--gone)"></i>X: deleted</span>
+    </div>
+    <p class="tl-note">Cell numbers count segments from the oldest. The model assumes a segment is copied the moment it closes and ignores check intervals. A real broker does neither.</p>
+    <div class="readout" id="tl-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>A Kafka partition keeps its data on the disks of the brokers that hold it. Long retention therefore means large disks, and a broker with a lot of data takes long to replace. Many consumers, though, read only recent data. Old data sits on expensive disk and is rarely touched.</p>
+  <p><strong>Tiered storage</strong> splits retention in two. A broker copies each closed segment to a second place, called <strong>remote storage</strong>. After a short <strong>local retention</strong> the broker deletes its own copy. The data stays readable from the remote copy until the <strong>total retention</strong> ends. Clients do not change.</p>
+  <p>Module 09 described this from general knowledge and said so. This module runs it. One fact surprised me and is worth knowing before you plan anything: the feature is half in Apache Kafka and half not. Kafka contains the machinery that decides what to copy and when. The code that talks to the remote store is a plug-in, and Apache Kafka does not include one.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> With a plug-in installed, a topic keeps closed segments on local disk for the local retention, keeps them in remote storage for the total retention, and reads from either place without the client knowing.</p>
+  </div>
+  <p class="note warn"><strong>What this lab did not test.</strong> It used one broker and a folder, not an object store. It measured no read speed, no outage, no cost, no compacted topic and no replication above one copy. Those parts below carry an <span class="tag-unverified">unverified</span> tag.</p>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part col" id="model" data-title="Mental model">
+  <span class="offset-tag">offset 1</span>
+  <h2>Mental model</h2>
+  <p>Think of two clocks on every closed segment. Both start when the segment closes. The short clock, <code>local.retention.ms</code>, decides when the local copy goes. The long clock, <code>retention.ms</code>, decides when the data is gone for good.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>State</th><th>Where the bytes are</th><th>When</th></tr></thead>
+      <tbody>
+        <tr><td>Active, local only</td><td>Local disk only.</td><td>The newest segment, still receiving writes. The lab showed it is never copied.</td></tr>
+        <tr><td>Local and remote</td><td>Both.</td><td>Closed, copied, and younger than the local retention.</td></tr>
+        <tr><td>Remote only</td><td>Remote storage only.</td><td>Older than the local retention, younger than the total retention.</td></tr>
+        <tr><td>Deleted</td><td>Nowhere.</td><td>Older than the total retention.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Use the demo above. Set local retention to 4 and total retention to 24. Drag "Now" forward and watch each segment move through the four states from the right to the left.</p>
+
+  <h3>Two start offsets</h3>
+  <p>A partition now has two different "oldest" offsets. The <strong>earliest offset</strong> is the oldest record you can still read, from any tier. The <strong>earliest-local offset</strong> is the oldest record still on local disk. In the lab they were 0 and 30000. Everything between them was served from remote storage.</p>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part col" id="internals" data-title="How it works">
+  <span class="offset-tag">offset 2</span>
+  <h2>How it works internally</h2>
+
+  <h3>Three parts</h3>
+  <ul>
+    <li><strong>The remote log manager</strong> runs inside each broker, in Apache Kafka. It finds closed segments, asks the plug-in to copy them, and later deletes expired ones. The broker log names it: <code>[RemoteLogManager=1 partition=...]</code>.</li>
+    <li><strong>The remote storage manager</strong> is the plug-in. It writes segments to, and reads them from, the remote store. Its class name is a broker setting. Apache Kafka does not provide one. This lab used the open-source project <em>tiered-storage-for-apache-kafka</em> from Aiven, release v1.1.1.</li>
+    <li><strong>The metadata topic</strong>, <code>__remote_log_metadata</code>, is an internal topic. The lab broker created it on its own. It records which segments exist remotely. <span class="tag-unverified">unverified: I did not read its contents, so what it stores is from the topic name and module 09's description</span></li>
+  </ul>
+
+  <h3>The life of one segment, as observed</h3>
+  <ol class="steps">
+    <li class="on">Producers write. The active segment fills up to <code>segment.bytes</code> and closes. A new active segment starts.</li>
+    <li class="on">The remote log manager copies the closed segment. In the lab, each segment became three files in the remote folder: the records (<code>.log</code>), <code>.indexes</code> and <code>.rsm-manifest</code>. The names start with the segment's base offset, then a unique id.</li>
+    <li class="on">The broker logged "Copied 00000000000000019968.log to remote storage" and the same for 24960 and 29952.</li>
+    <li class="on">After <code>local.retention.ms</code>, the normal retention task removed the local copy. The files first got the ending <code>.deleted</code>, as module 01 describes.</li>
+    <li class="on">A consumer reading from offset 0 got all 30000 records, although no local file held them.</li>
+    <li class="on">When the total retention <code>retention.ms</code> passed, the remote files were deleted too.</li>
+  </ol>
+
+  <h3>What the remote folder looked like</h3>
+  <pre class="out">/tmp/remote/history-&lt;topicid&gt;/0/
+  &lt;baseoffset&gt;-&lt;uuid&gt;.log
+  &lt;baseoffset&gt;-&lt;uuid&gt;.indexes
+  &lt;baseoffset&gt;-&lt;uuid&gt;.rsm-manifest
+  ... 7 segments x 3 files = 21 files, 6.1 MB</pre>
+  <p>The plug-in stores one segment as one data file plus its indexes and a manifest. The topic id in the path is the topic's unique id, not its name.</p>
+
+  <h3>Where the plug-in lives</h3>
+  <p>The plug-in is a set of Java library files, called jars. The lab folder <code>tiered/plugins/core</code> held 124 jars including <code>core-1.1.1.jar</code>. The folder <code>tiered/plugins/filesystem</code> held 3 files: <code>storage-core-1.1.1.jar</code>, <code>storage-filesystem-1.1.1.jar</code> and <code>commons-io-2.19.0.jar</code>. The compose file mounts both read-only at <code>/tiered</code>, and a broker setting gives the class path. In production you would swap the filesystem backend for one that writes to S3, Google Cloud Storage or Azure. <span class="tag-unverified">unverified: I did not test any object-store backend, and I did not check which backends this release includes</span></p>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>The lab sets broker settings as environment variables. The Kafka image turns <code>KAFKA_X_Y</code> into <code>x.y</code>, so <code>KAFKA_REMOTE_LOG_STORAGE_SYSTEM_ENABLE</code> becomes <code>remote.log.storage.system.enable</code>. The first table lists what ran. A "what it does" cell with a tag means I took it from the setting's name, not from a test.</p>
+  </div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Setting</th><th>Lab value</th><th>Default seen</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>remote.log.storage.system.enable</code> (broker)</td><td>true</td><td>false</td><td>Broker switch for tiered storage. Without it, a topic cannot use it.</td></tr>
+        <tr><td><code>remote.log.storage.manager.class.name</code> (broker)</td><td><code>io.aiven.kafka.tieredstorage.RemoteStorageManager</code></td><td>not recorded</td><td>The plug-in class the broker loads.</td></tr>
+        <tr><td><code>remote.log.storage.manager.class.path</code> (broker)</td><td><code>/tiered/core/*:/tiered/filesystem/*</code></td><td>not recorded</td><td>Where the broker finds the plug-in jars.</td></tr>
+        <tr><td><code>remote.log.metadata.manager.listener.name</code> (broker)</td><td><code>PLAINTEXT</code></td><td>not recorded</td><td>The listener the metadata manager connects to. <span class="tag-unverified">unverified: meaning taken from the name</span></td></tr>
+        <tr><td><code>rlmm.config.remote.log.metadata.topic.replication.factor</code> (broker)</td><td>1</td><td>not recorded</td><td>Copies of the internal metadata topic. The lab has one broker, so it needs 1. <span class="tag-unverified">unverified: reason inferred</span></td></tr>
+        <tr><td><code>remote.log.manager.task.interval.ms</code> (broker)</td><td>5000</td><td>not recorded</td><td>How often the remote log manager runs its tasks. <span class="tag-unverified">unverified: meaning taken from the name</span> The lab lowered it to see results fast.</td></tr>
+        <tr><td><code>log.retention.check.interval.ms</code> (broker)</td><td>5000</td><td>300000 (module 01)</td><td>How often the broker looks for segments to delete. The lab lowered it so deletions show within seconds.</td></tr>
+        <tr><td><code>rsm.config.chunk.size</code> (plug-in)</td><td>4194304</td><td>not recorded</td><td>A plug-in setting. <span class="tag-unverified">unverified: I do not know exactly what the plug-in does with it</span></td></tr>
+        <tr><td><code>rsm.config.storage.backend.class</code> (plug-in)</td><td><code>io.aiven.kafka.tieredstorage.storage.filesystem.FileSystemStorage</code></td><td>not recorded</td><td>Which backend writes the remote files. This one writes to a folder.</td></tr>
+        <tr><td><code>rsm.config.storage.root</code> (plug-in)</td><td><code>/tmp/remote</code></td><td>not recorded</td><td>The folder used as "remote". It is on a memory-backed file system in the container, so it vanishes with the container.</td></tr>
+        <tr><td><code>rsm.config.storage.overwrite.enabled</code> (plug-in)</td><td>true</td><td>not recorded</td><td>A plug-in setting. <span class="tag-unverified">unverified: meaning taken from the name</span></td></tr>
+        <tr><td><code>remote.storage.enable</code> (topic)</td><td>true</td><td>false</td><td>The topic opts in to tiering.</td></tr>
+        <tr><td><code>local.retention.ms</code> (topic)</td><td>10000</td><td>−2, meaning the same as total retention</td><td>How long a closed segment stays on local disk.</td></tr>
+        <tr><td><code>retention.ms</code> (topic)</td><td>3600000, later 15000</td><td>604800000 (module 01)</td><td>Total retention. Changing it also deleted the remote data.</td></tr>
+        <tr><td><code>segment.bytes</code> (topic)</td><td>1048576</td><td>1073741824 (module 01)</td><td>Segment size. 1 MiB is the smallest value Kafka accepts (module 01).</td></tr>
+        <tr><td><code>log.local.retention.ms</code> (broker)</td><td>not set</td><td>−2</td><td>The broker-wide default for <code>local.retention.ms</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h3>Exist, not tested</h3>
+    <p>The topic-creation tool lists these as valid topic settings. I did not use them, so I state no behaviour.</p>
+    <ul>
+      <li><code>local.retention.bytes</code></li>
+      <li><code>remote.log.copy.disable</code></li>
+      <li><code>remote.log.delete.on.disable</code></li>
+    </ul>
+    <h3>The topic from the lab</h3>
+    <pre><code>--partitions 1 --replication-factor 1
+--config remote.storage.enable=true
+--config segment.bytes=1048576
+--config local.retention.ms=10000
+--config retention.ms=3600000</code></pre>
+    <p class="note">These numbers are for a quick demonstration. Ten seconds of local retention would be absurd in production. <span class="tag-unverified">unverified: I have no tested guidance for production values</span></p>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>The feature needs a plug-in that Apache Kafka does not include</h3>
+    <dl>
+      <dt>You observe</dt><dd>In module 09 the stock lab cluster had the settings but no plug-in, so tiering could not run. Here it ran only after I downloaded a separate project and mounted it into the container.</dd>
+      <dt>Cause</dt><dd>The plug-in is outside Apache Kafka. It has its own releases, its own owner and its own bugs.</dd>
+      <dt>Fix</dt><dd>Pin the plug-in version. Test it against each Kafka upgrade, as module 12 says for monitoring tools. <span class="tag-unverified">unverified: I tested one plug-in release with one Kafka release. I did not test any other pair</span></dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Shortening total retention deletes the remote data too</h3>
+    <dl>
+      <dt>You observe</dt><dd>I set <code>retention.ms=15000</code> with <code>kafka-configs.sh --alter</code>. After 40 seconds the remote folder held 0 files and the earliest offset was 30000.</dd>
+      <dt>Cause</dt><dd>Total retention governs both tiers. The remote copy is not a separate archive.</dd>
+      <dt>Fix</dt><dd>Treat <code>retention.ms</code> as the setting that destroys data, as before. Change it with the same care as always.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A topic with big segments and little traffic never tiers</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Local disk does not shrink for a quiet topic, although tiering is on.</dd>
+      <dt>Reason</dt><dd>Two facts combine. Only closed segments are copied, shown in the lab. A segment closes only at <code>segment.bytes</code> or <code>segment.ms</code> (module 01, 1 GiB and 7 days by default). A quiet topic stays in one active segment for days.</dd>
+      <dt>Fix</dt><dd>Lower <code>segment.ms</code>, as module 01 advises for retention. <span class="tag-unverified">unverified: I did not run a quiet topic</span></dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The remote store is down</h3>
+    <dl>
+      <dt>Not tested</dt><dd>I did not stop or break the remote folder.</dd>
+      <dt>What I expect</dt><dd>Copies stop, so local disk grows, and reads of old data fail while recent data still works. <span class="tag-unverified">unverified: expectation from the design, not an observation</span></dd>
+      <dt>What to do</dt><dd>Test it before you depend on it: make the store unreachable, then watch disk, copy errors in the broker log, and consumer errors.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Reading cold data is slower than reading local data</h3>
+    <dl>
+      <dt>Not measured</dt><dd>The read of all 30000 records worked. I took no timing, and the lab "remote" is a local folder, so a timing would mislead anyway.</dd>
+      <dt>What to expect</dt><dd>A network call to an object store is slower than a local disk, and many stores charge for requests. <span class="tag-unverified">unverified: general knowledge, no number from this lab</span></dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>This lab was run on 5 October 2026</strong> with apache/kafka:4.3.1 and Aiven's tiered-storage plug-in v1.1.1. It uses its own single node, <code>kafka-tier</code>, from the folder <code>tiered/</code>. The compose file and the plug-in folders are already there. The plug-in is not part of Apache Kafka. Remote storage is a folder, not an object store.</p>
+  </div>
+  <p>If the plug-in folders are missing, these are the download commands I used. They fetch from the project's GitHub releases page.</p>
+  <div class="code"><pre><code>cd ~/Desktop/kafka-knowledge-base/tiered
+mkdir -p plugins/core plugins/filesystem
+curl -sL -o core.tgz https://github.com/Aiven-Open/tiered-storage-for-apache-kafka/releases/download/v1.1.1/core-1.1.1.tgz
+curl -sL -o filesystem.tgz https://github.com/Aiven-Open/tiered-storage-for-apache-kafka/releases/download/v1.1.1/filesystem-1.1.1.tgz
+tar -xzf core.tgz -C plugins/core --strip-components=1
+tar -xzf filesystem.tgz -C plugins/filesystem --strip-components=1</code></pre></div>
+
+  <h3>Step 1. Start the node</h3>
+  <div class="code"><pre><code>cd ~/Desktop/kafka-knowledge-base/tiered
+docker compose up -d</code></pre></div>
+  <p>The broker started with no errors and logged "Kafka Server started". The compose file carries the settings from the config table. Use the bootstrap address from that file in the commands below; I write it as <code>&lt;address&gt;</code>.</p>
+
+  <h3>Step 2. Create a topic that tiers</h3>
+  <div class="code"><pre><code>kafka-topics.sh --bootstrap-server &lt;address&gt; --create --topic history \
+  --partitions 1 --replication-factor 1 \
+  --config remote.storage.enable=true \
+  --config segment.bytes=1048576 \
+  --config local.retention.ms=10000 \
+  --config retention.ms=3600000</code></pre></div>
+  <p>The internal topic <code>__remote_log_metadata</code> appeared.</p>
+
+  <h3>Step 3. Write 30000 records</h3>
+  <div class="code"><pre><code>kafka-producer-perf-test.sh --topic history --num-records 30000 \
+  --record-size 200 --throughput -1 ...</code></pre></div>
+  <pre class="out">30000 records, 11.61 MB/s</pre>
+  <p>The "..." stands for the connection options the tool needs. Right after the write, the partition had 7 <code>.log</code> files on local disk.</p>
+
+  <h3>Step 4. Wait 35 seconds and look at both sides</h3>
+  <div class="out-label">Local partition directory, the .log files</div>
+  <pre class="out">00000000000000000000.log.deleted
+00000000000000004992.log.deleted
+00000000000000009984.log.deleted
+00000000000000014976.log.deleted
+00000000000000019968.log.deleted
+00000000000000024960.log.deleted
+00000000000000029952.log.deleted
+00000000000000030000.log</pre>
+  <div class="out-label">Remote folder /tmp/remote/history-&lt;topicid&gt;/0/</div>
+  <pre class="out">21 files = 7 segments x 3 files each, 6.1 MB total</pre>
+  <div class="out-label">Broker log, three of the copy lines</div>
+  <pre class="out">[RemoteLogManager=1 partition=&lt;topicid&gt;:history-0] Copied 00000000000000019968.log to remote storage with segment-id: ...
+(the same line for 24960 and 29952)</pre>
+  <p>Read this carefully. All seven closed segments were copied and then deleted locally. The only live local file is the active segment, <code>00000000000000030000.log</code>. Nothing was copied from it.</p>
+
+  <h3>Step 5. Compare the offsets</h3>
+  <div class="code"><pre><code>kafka-get-offsets.sh --bootstrap-server &lt;address&gt; --topic history --time earliest
+kafka-get-offsets.sh --bootstrap-server &lt;address&gt; --topic history --time earliest-local
+kafka-get-offsets.sh --bootstrap-server &lt;address&gt; --topic history --time latest</code></pre></div>
+  <pre class="out">earliest:        0   (history:0:0)
+earliest-local:  30000
+latest:          30000</pre>
+  <p>The oldest readable record is 0. The oldest local record is 30000. The data between is remote only.</p>
+
+  <h3>Step 6. Read everything from the beginning</h3>
+  <p>A console consumer reading <code>history</code> from the beginning returned all 30000 messages. No timing was taken. It did not fail, so reads of the remote range work in this setup.</p>
+
+  <h3>Step 7. Shorten total retention and watch the remote folder</h3>
+  <div class="code"><pre><code>kafka-configs.sh --bootstrap-server &lt;address&gt; --alter --entity-type topics \
+  --entity-name history --add-config retention.ms=15000
+# wait 40 seconds</code></pre></div>
+  <pre class="out">remote folder: 0 files
+earliest offset: 30000</pre>
+  <p>The remote data was gone and the earliest offset moved up to 30000. Total retention applied to the remote tier.</p>
+
+  <h3>Step 8. Clean up</h3>
+  <div class="code"><pre><code>docker compose down</code></pre></div>
+  <p>The remote folder is memory-backed, so it disappears with the container.</p>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Tiered storage ships with Kafka.</td><td>Kafka has the machinery. The plug-in that writes to remote storage is a separate project.</td></tr>
+        <tr><td>Setting the topic option is enough.</td><td>The broker switch and the plug-in settings must be in place first. The topic option alone does nothing useful.</td></tr>
+        <tr><td>Tiered storage is a backup.</td><td>Total retention deleted the remote data in the lab. A deleted topic is deleted there too (module 09).</td></tr>
+        <tr><td>The active segment is copied too.</td><td>Only closed segments were copied. The active file stayed local.</td></tr>
+        <tr><td>Local retention applies before the copy.</td><td>The lab copied first. Local files were deleted after the local retention.</td></tr>
+        <tr><td>There is one start offset.</td><td>There are two: earliest and earliest-local. They were 0 and 30000.</td></tr>
+        <tr><td><code>retention.ms</code> now means local time.</td><td>It stays the total. <code>local.retention.ms</code> is the local part.</td></tr>
+        <tr><td>Tiering removes the need for replication.</td><td>Recent data is only on broker disks, so it still needs copies on several brokers. <span class="tag-unverified">unverified: the lab used one copy and tested no broker loss</span></td></tr>
+        <tr><td>A folder test proves object-store behaviour.</td><td>It proves the Kafka side only. Latency, errors and cost need a real store.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>When does tiered storage pay off, and what does reading cold data cost?</summary><div class="answer">
+    <p>It pays off when retention is long compared with how far back most consumers read. Then most local disk holds data nobody touches. Moving it out lets you keep fewer or smaller disks. It does not pay off when retention is short, or when consumers often replay old data.</p>
+    <p>The cost is on cold reads. I measured no timing and no price. Expect a slower read than local disk, and in a real object store, a charge per request. <span class="tag-unverified">unverified: expectation, not measured</span> Ask for the share of reads that go beyond the local window. If it is large, tiering moves cost rather than removing it.</p>
+  </div></details>
+
+  <details class="qa"><summary>What happens if the remote store is down?</summary><div class="answer">
+    <p>I did not test it, and I will not pretend to. The questions to answer by experiment are: does the broker keep accepting writes, does local disk fill because copies stop, do reads of recent data still work, and how long until the broker recovers after the store returns?</p>
+    <p>The design suggests recent data keeps working while old reads fail, and local disk grows until the store returns. <span class="tag-unverified">unverified: reasoning, not a test</span> The staff answer is to size local disk for a remote outage of a stated length and to alert on copy failures.</p>
+  </div></details>
+
+  <details class="qa"><summary>How does tiering change replica rebuild and rebalancing?</summary><div class="answer">
+    <p>A new or replaced replica must catch up. With tiering, the data older than the local window is already remote, so a replica may need to copy only the local part. That makes rebuilds and rebalances shorter and lighter on the network. <span class="tag-unverified">unverified: I ran one broker, so no replica was ever rebuilt</span></p>
+    <p>The saving depends on how much of the data is local. With a local retention near the total, there is no saving.</p>
+  </div></details>
+
+  <details class="qa"><summary>What do <code>retention.ms</code> and <code>local.retention.ms</code> mean now?</summary><div class="answer">
+    <p><code>retention.ms</code> is the total lifetime of data across both tiers. <code>local.retention.ms</code> is how long a closed segment stays on local disk after it closes. The default of −2 means "same as total", so local data is never cut short until you set it.</p>
+    <p>The lab confirmed both. Local files went away after the local retention, with the data still readable. Shortening <code>retention.ms</code> emptied the remote folder and moved the earliest offset to 30000. The segment rule from module 01 still applies: whole segments only.</p>
+  </div></details>
+
+  <details class="qa"><summary>What is the risk of the plug-in dependency?</summary><div class="answer">
+    <p>The plug-in is not part of Apache Kafka. Its owner, release schedule and supported Kafka versions are separate from yours. A Kafka upgrade can break it, and a plug-in bug sits in your data path. If the project stops, you must adopt another plug-in or move the data off it.</p>
+    <p>Reduce the risk by pinning versions, testing every Kafka upgrade with the plug-in, and keeping a tested exit plan. <span class="tag-unverified">unverified: I checked one plug-in release only. I did not review its compatibility policy or support terms</span></p>
+  </div></details>
+
+  <details class="qa"><summary>If old data is remote, do I still need replication, and is this a backup?</summary><div class="answer">
+    <p>Replication still matters. Recent data lives only on broker disks until its segment closes and is copied, and the active segment is never copied. A broker loss needs copies on other brokers for that data. <span class="tag-unverified">unverified: the lab used one copy, so I did not see replicas and tiering together</span></p>
+    <p>It is not a backup. The remote copy follows the same retention and the same topic lifetime. The lab showed that shortening retention deleted it. A backup must survive a wrong setting, a deleted topic and a bad deploy.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+  <details class="qa"><summary>1. Which part of tiered storage is not in Apache Kafka?</summary><div class="answer"><p>The plug-in that writes to and reads from remote storage.</p></div></details>
+  <details class="qa"><summary>2. Which segments does the broker copy?</summary><div class="answer"><p>Closed segments only. The active segment stayed local in the lab.</p></div></details>
+  <details class="qa"><summary>3. What does <code>local.retention.ms</code> control?</summary><div class="answer"><p>How long a closed segment stays on local disk. The default −2 means the same as total retention.</p></div></details>
+  <details class="qa"><summary>4. What does <code>retention.ms</code> control when tiering is on?</summary><div class="answer"><p>The total lifetime across both tiers. In the lab, shortening it emptied the remote folder.</p></div></details>
+  <details class="qa"><summary>5. What were earliest and earliest-local in the lab?</summary><div class="answer"><p>0 and 30000. Offsets 0 to 29999 were remote only.</p></div></details>
+  <details class="qa"><summary>6. What is the smallest <code>segment.bytes</code> you can set?</summary><div class="answer"><p>1048576, which is 1 MiB (module 01).</p></div></details>
+  <details class="qa"><summary>7. Name two things this lab did not test.</summary><div class="answer"><p>Any of: a real object store, read speed, a remote outage, compacted topics, more than one copy, cost.</p></div></details>
+  <details class="qa"><summary>8. Why is tiered storage not a backup?</summary><div class="answer"><p>The remote data follows the same retention and topic lifetime. Shortening retention deleted it.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="13-cdc-outbox-lab.html">← 13 CDC and outbox lab</a>
+    <a class="btn primary" href="../index.html">Back to the index →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+(function () {
+  const now = document.getElementById('tl-now'), loc = document.getElementById('tl-loc'), tot = document.getElementById('tl-tot');
+  const cells = document.getElementById('tl-cells'), out = document.getElementById('tl-out');
+  const o = { now: document.getElementById('tl-now-o'), loc: document.getElementById('tl-loc-o'), tot: document.getElementById('tl-tot-o') };
+  const LABEL = { lo: 'A', lr: 'B', ro: 'R', de: 'X' };
+  const NAME = { lo: 'active, local only', lr: 'local and remote', ro: 'remote only', de: 'deleted' };
+  function draw() {
+    const T = +now.value, L = +loc.value, R0 = +tot.value;
+    const R = Math.max(R0, L);
+    o.now.textContent = T; o.loc.textContent = L; o.tot.textContent = R0;
+    const count = { lo: 0, lr: 0, ro: 0, de: 0 };
+    let firstKept = -1, firstLocal = -1;
+    cells.innerHTML = '';
+    for (let i = 0; i <= T; i++) {
+      let s;
+      if (i === T) s = 'lo';
+      else {
+        const age = T - (i + 1);
+        s = age > R ? 'de' : age > L ? 'ro' : 'lr';
+      }
+      count[s]++;
+      if (s !== 'de' && firstKept < 0) firstKept = i;
+      if ((s === 'lo' || s === 'lr') && firstLocal < 0) firstLocal = i;
+      const c = document.createElement('div');
+      c.className = 'cell ' + s;
+      c.textContent = LABEL[s] + i;
+      c.title = 'Segment ' + i + ': ' + NAME[s];
+      cells.appendChild(c);
+    }
+    cells.setAttribute('aria-label', (T + 1) + ' segments: ' + count.lo + ' active, ' + count.lr + ' local and remote, ' + count.ro + ' remote only, ' + count.de + ' deleted');
+    let t = '<b>Hour ' + T + '.</b> Local disk holds ' + (count.lo + count.lr) + ' segments. Remote storage holds ' + (count.lr + count.ro) + '. ' +
+      count.de + ' are deleted. Oldest readable segment: ' + firstKept + ' (earliest). Oldest local segment: ' + firstLocal + ' (earliest-local).';
+    if (R0 < L) t += ' Total retention cannot be shorter than local retention, so this model uses ' + L + ' hours.';
+    if (count.ro === 0) t += ' No segment is remote only yet: local retention has not passed for any of them.';
+    out.innerHTML = t;
+  }
+  [now, loc, tot].forEach(function (el) { el.addEventListener('input', draw); });
+  draw();
+})();
+</script>
+</body>
+</html>

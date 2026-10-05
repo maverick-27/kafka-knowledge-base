@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03 Consumers · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .own-0 { background: var(--primary); border-color: var(--primary); color: var(--bg); }
+  .own-1 { background: var(--read); border-color: var(--read); color: var(--bg); }
+  .own-2 { background: var(--write); border-color: var(--write); color: var(--write-ink); }
+  .own-3 { background: #B46BD6; border-color: #B46BD6; color: #1B0B24; }
+  .cell.paused { opacity: .35; border-style: dashed; }
+  .part-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin: 1rem 0; }
+  .part-grid .cell { min-width: 0; height: 64px; font-size: .78rem; line-height: 1.25; text-align: center; padding: 0 .2rem; }
+  @media (max-width: 520px) { .part-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 03 Consumers</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 03 · Day 3 · Kafka 4.3</div>
+  <h1>Consumers</h1>
+  <p class="lede">A consumer reads records and remembers how far it has read. A group of consumers shares the partitions of a topic. Most production problems with Kafka are consumer problems: lag, rebalances, and records processed twice or not at all.</p>
+
+  <div class="lab-panel" id="rb-demo" style="margin:0">
+    <h3>Try it: a group shares six partitions</h3>
+    <p class="hint">Each box is a partition. The label shows which consumer owns it. Add or remove a consumer and watch which partitions must stop.</p>
+    <div class="controls">
+      <button class="btn primary" type="button" id="rb-add">Add a consumer</button>
+      <button class="btn" type="button" id="rb-remove">Remove a consumer</button>
+      <span id="rb-lbl">Rebalance style</span>
+      <div class="seg" role="group" aria-labelledby="rb-lbl">
+        <button type="button" data-style="eager" aria-pressed="false">Stop everything</button>
+        <button type="button" data-style="incremental" aria-pressed="true">Move only what must move</button>
+      </div>
+    </div>
+    <div class="part-grid" id="rb-grid"></div>
+    <div class="readout" id="rb-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>A <strong>consumer</strong> is the client library that reads records from Kafka. It asks a broker for records from a partition, starting at an offset. The broker does not push records and does not track what each consumer has seen. The consumer pulls, and the consumer keeps its own position.</p>
+  <p>One consumer is often too slow for a busy topic. So consumers join a <strong>consumer group</strong>, identified by <code>group.id</code>. Kafka gives each partition to exactly one consumer in the group. Two consumers in the same group never read the same partition at the same time. Two different groups each read everything, without affecting each other.</p>
+  <p>The group saves its position as a <strong>committed offset</strong> for each partition. After a crash or a restart, the next owner of the partition continues from the committed offset. When and how you commit decides if a failure loses records or repeats them.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> A consumer group divides partitions among its members, each member pulls records and commits its position, and Kafka moves partitions to other members when one stops.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+    <p>Think of a team that reads six notebooks. Each notebook has one reader at a time, and each reader keeps a bookmark in the notebook. If a reader leaves, someone else takes the notebook and continues from the bookmark. If the bookmark was not moved recently, the new reader reads some pages again.</p>
+    <ul>
+      <li><strong>The partition count is the limit of parallel work.</strong> Six partitions can feed at most six consumers in one group. A seventh has nothing to do.</li>
+      <li><strong>The committed offset is the bookmark.</strong> It is the offset of the <em>next</em> record to read, not the last one read.</li>
+      <li><strong>A rebalance is the moment partitions change owner.</strong> It happens when a member joins, leaves, or is judged dead.</li>
+      <li><strong>Lag is the distance from the bookmark to the end of the notebook.</strong></li>
+    </ul>
+
+    <h3>Three delivery guarantees</h3>
+    <p>The order of two actions, "process the record" and "commit the offset", gives the guarantee.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Order</th><th>After a crash</th></tr></thead>
+        <tbody>
+          <tr><td>At most once</td><td>Commit, then process</td><td>Records that were committed but not processed are lost.</td></tr>
+          <tr><td>At least once</td><td>Process, then commit</td><td>Records that were processed but not committed are processed again.</td></tr>
+          <tr><td>Exactly once</td><td>Process and commit in one atomic step</td><td>Neither. This needs transactions (module 06) or a processing step that is safe to repeat.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="lab-panel wide reveal" id="cm-demo">
+    <h3>Try it: crash in the middle of a batch</h3>
+    <p class="hint">The consumer receives records 0 to 4. It crashes after it has processed three of them.</p>
+    <div class="controls">
+      <span id="cm-lbl">Commit</span>
+      <div class="seg" role="group" aria-labelledby="cm-lbl">
+        <button type="button" data-mode="before" aria-pressed="false">before processing</button>
+        <button type="button" data-mode="after" aria-pressed="true">after processing</button>
+      </div>
+      <button class="btn primary" type="button" id="cm-run">Run and crash</button>
+    </div>
+    <div class="lane"><div class="lane-name">first run</div><div class="lane-cells" id="cm-first"></div></div>
+    <div class="lane"><div class="lane-name">after restart</div><div class="lane-cells" id="cm-second"></div></div>
+    <div class="readout" id="cm-out" aria-live="polite">Choose when to commit, then press the button.</div>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>The poll loop</h3>
+    <p>All consumer work happens inside one call that your code repeats: <code>poll()</code>.</p>
+    <ol class="steps">
+      <li class="on"><strong>Join.</strong> On the first poll, the consumer finds the group's <strong>coordinator</strong>, a broker that manages this group, and joins the group.</li>
+      <li class="on"><strong>Get an assignment.</strong> The consumer learns which partitions it owns.</li>
+      <li class="on"><strong>Find the start.</strong> For each partition it asks for the committed offset. If there is none, <code>auto.offset.reset</code> decides: <code>latest</code> (the default) or <code>earliest</code>.</li>
+      <li class="on"><strong>Fetch.</strong> It sends fetch requests to the leaders of its partitions. The broker answers when it has <code>fetch.min.bytes</code> of data or after <code>fetch.max.wait.ms</code>.</li>
+      <li class="on"><strong>Return records.</strong> <code>poll()</code> hands your code up to <code>max.poll.records</code> records.</li>
+      <li class="on"><strong>Process and commit.</strong> Your code processes them. The offset is committed by you, or by auto-commit during a later poll.</li>
+    </ol>
+    <p>A consumer is not safe to use from several threads. One thread owns it and calls <code>poll()</code>.</p>
+
+    <h3>Where offsets are stored</h3>
+    <p>Committed offsets are records in an internal topic, <code>__consumer_offsets</code>. It has 50 partitions and uses compaction, so it keeps the newest offset for each group, topic and partition. The coordinator for a group is the broker that leads one of those 50 partitions: the hash of the group id picks which one.</p>
+    <p>A group's offsets are deleted when the group has had no members for <code>offsets.retention.minutes</code>, 7 days by default. After that, the group starts again from <code>auto.offset.reset</code>.</p>
+
+    <h3>How Kafka knows a consumer is alive</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Check</th><th>Detects</th><th>Limit</th></tr></thead>
+        <tbody>
+          <tr><td>Heartbeat</td><td>The process or its network is dead. A background thread sends heartbeats.</td><td>No heartbeat for the session timeout, 45 seconds.</td></tr>
+          <tr><td>Poll interval</td><td>The process is alive but your code is stuck or too slow.</td><td>No <code>poll()</code> call for <code>max.poll.interval.ms</code>, 5 minutes.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>When either limit is passed, the consumer leaves the group and its partitions go to other members.</p>
+
+    <h3>Two rebalance protocols</h3>
+    <p>Kafka 4 has two ways to run a group. The consumer chooses with <code>group.protocol</code>.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th></th><th>Classic (<code>group.protocol=classic</code>, the default)</th><th>New (<code>group.protocol=consumer</code>)</th></tr></thead>
+        <tbody>
+          <tr><td>Who computes the assignment</td><td>One consumer in the group, chosen as leader, using <code>partition.assignment.strategy</code>.</td><td>The broker, using <code>group.remote.assignor</code>: <code>uniform</code> or <code>range</code>.</td></tr>
+          <tr><td>How a change happens</td><td>Every member must rejoin. With the older strategies, every member first gives up all its partitions.</td><td>The broker tells each member only what to give up and what to take. Members that are not affected continue.</td></tr>
+          <tr><td>Where timeouts are set</td><td>On the client: <code>session.timeout.ms</code>, <code>heartbeat.interval.ms</code>.</td><td>On the broker: <code>group.consumer.session.timeout.ms</code>, <code>group.consumer.heartbeat.interval.ms</code>. The two client settings are not supported.</td></tr>
+          <tr><td>Effect of one slow member</td><td>It can hold the whole rebalance.</td><td>It delays only its own partitions.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The demo at the top of this page shows the difference. "Stop everything" is the classic protocol with an older strategy such as <code>RangeAssignor</code>. "Move only what must move" is the new protocol, and also the classic protocol with <code>CooperativeStickyAssignor</code>.</p>
+    <p>Kafka 4.3 prints this line when a console consumer starts: "The consumer rebalance protocol (KIP-848) is production-ready! Set group.protocol=consumer to try it out."</p>
+
+    <h3>Static membership</h3>
+    <p>Each restart of a consumer normally causes two rebalances: one when it leaves and one when it returns. If you give each consumer a fixed name with <code>group.instance.id</code>, the coordinator keeps its partitions reserved until the session timeout. A restart that is faster than the timeout causes no rebalance. This helps rolling deployments.</p>
+
+    <h3>Lag</h3>
+    <p>Lag for a partition is the log end offset minus the committed offset. A steady small lag is normal. A lag that grows means the group processes slower than producers write. If the lag grows for longer than the retention time, the oldest unread records are deleted before the consumer reaches them.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="lag-demo">
+    <h3>Try it: how long until a slow consumer loses data?</h3>
+    <div class="controls">
+      <label for="lg-p">Produced each second</label>
+      <select id="lg-p"><option>500</option><option selected>1000</option><option>5000</option></select>
+      <label for="lg-c">Consumed each second</label>
+      <select id="lg-c"><option>400</option><option selected>800</option><option>1000</option><option>2000</option><option>6000</option></select>
+      <label for="lg-r">Retention</label>
+      <select id="lg-r"><option value="1">1 day</option><option value="7" selected>7 days</option></select>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="lg-growth">–</b><span>lag change each hour</span></div>
+      <div class="stat"><b id="lg-hour">–</b><span>how far behind after 24 hours</span></div>
+      <div class="stat"><b id="lg-loss">–</b><span>time until unread data is deleted</span></div>
+    </div>
+    <div class="readout" id="lg-out" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>Consumer defaults come from the Kafka 4.3 consumer configuration reference. Broker defaults were read from the lab cluster.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Consumer config</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>group.id</code></td><td>null</td><td>The name of the consumer group.</td><td>Always set it. One name for each application that needs its own copy of the data.</td></tr>
+        <tr><td><code>group.protocol</code></td><td><code>classic</code></td><td>Which rebalance protocol to use: <code>classic</code> or <code>consumer</code>.</td><td>Use <code>consumer</code> for new applications on Kafka 4.</td></tr>
+        <tr><td><code>group.remote.assignor</code></td><td>null</td><td>For the new protocol: the broker-side strategy. Null lets the broker choose; the lab cluster chose <code>uniform</code>.</td><td>Use <code>range</code> when two topics must have matching partitions on the same consumer, for joins.</td></tr>
+        <tr><td><code>partition.assignment.strategy</code></td><td><code>RangeAssignor</code>, <code>CooperativeStickyAssignor</code></td><td>For the classic protocol: the client-side strategy. The first in the list that all members support is used.</td><td>Put <code>CooperativeStickyAssignor</code> alone to avoid stop-everything rebalances.</td></tr>
+        <tr><td><code>group.instance.id</code></td><td>null</td><td>A fixed name for this consumer: static membership.</td><td>Set a stable, unique value for each instance to avoid rebalances on restart.</td></tr>
+        <tr><td><code>enable.auto.commit</code></td><td><code>true</code></td><td>Commits the position automatically during <code>poll()</code>.</td><td>Set <code>false</code> and commit yourself when losing a record is not acceptable.</td></tr>
+        <tr><td><code>auto.commit.interval.ms</code></td><td>5000 (5 seconds)</td><td>How often auto-commit runs.</td><td>Rarely.</td></tr>
+        <tr><td><code>auto.offset.reset</code></td><td><code>latest</code></td><td>Where to start when there is no committed offset, or it points to deleted data. Values: <code>latest</code>, <code>earliest</code>, <code>none</code>, or <code>by_duration:</code> followed by a duration.</td><td>Use <code>earliest</code> when a new group must process existing data. Use <code>none</code> to fail loudly.</td></tr>
+        <tr><td><code>session.timeout.ms</code></td><td>45000 (45 seconds)</td><td>Classic protocol only: time without a heartbeat before the member is removed.</td><td>Lower it to detect a dead consumer sooner. Too low gives false alarms.</td></tr>
+        <tr><td><code>heartbeat.interval.ms</code></td><td>3000 (3 seconds)</td><td>Classic protocol only: time between heartbeats.</td><td>Keep it at one third of the session timeout or lower.</td></tr>
+        <tr><td><code>max.poll.interval.ms</code></td><td>300000 (5 minutes)</td><td>Longest time allowed between two <code>poll()</code> calls.</td><td>Raise it, or lower <code>max.poll.records</code>, when processing one batch can take long.</td></tr>
+        <tr><td><code>max.poll.records</code></td><td>500</td><td>Most records returned by one <code>poll()</code>.</td><td>Lower it when each record takes long to process.</td></tr>
+        <tr><td><code>fetch.min.bytes</code></td><td>1</td><td>The broker waits until it has this much data before it answers.</td><td>Raise it for throughput and fewer requests, at the cost of delay.</td></tr>
+        <tr><td><code>fetch.max.wait.ms</code></td><td>500</td><td>Longest time the broker waits for <code>fetch.min.bytes</code>.</td><td>Lower it when a small delay matters.</td></tr>
+        <tr><td><code>fetch.max.bytes</code></td><td>52428800 (50 MiB)</td><td>Most data in one fetch answer.</td><td>Rarely.</td></tr>
+        <tr><td><code>max.partition.fetch.bytes</code></td><td>1048576 (1 MiB)</td><td>Most data from one partition in one fetch answer.</td><td>Raise it for large records or to drain a large lag faster.</td></tr>
+        <tr><td><code>isolation.level</code></td><td><code>read_uncommitted</code></td><td>Whether to see records from transactions that are not finished.</td><td>Set <code>read_committed</code> when producers use transactions. Module 06.</td></tr>
+        <tr><td><code>client.rack</code></td><td>empty</td><td>The consumer's location. It allows fetching from a nearby follower.</td><td>Set it in multi-zone clusters to cut cross-zone traffic.</td></tr>
+        <tr><td><code>allow.auto.create.topics</code></td><td><code>true</code></td><td>Lets a subscribe call create a missing topic, if the broker also allows it.</td><td>Set <code>false</code> so that a typing error does not create a topic.</td></tr>
+        <tr><td><code>request.timeout.ms</code>, <code>default.api.timeout.ms</code></td><td>30000, 60000</td><td>Time limits for one request and for one client call.</td><td>Rarely.</td></tr>
+        <tr><td><code>check.crcs</code></td><td><code>true</code></td><td>Verifies the checksum of each batch.</td><td>Leave it on.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col"><h3>Broker settings for groups</h3></div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Broker config</th><th>Default</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>group.coordinator.rebalance.protocols</code></td><td><code>classic,consumer,streams</code></td><td>The protocols the broker accepts.</td></tr>
+        <tr><td><code>group.consumer.session.timeout.ms</code></td><td>45000</td><td>New protocol: time without a heartbeat before a member is removed.</td></tr>
+        <tr><td><code>group.consumer.heartbeat.interval.ms</code></td><td>5000</td><td>New protocol: the heartbeat interval the broker tells members to use.</td></tr>
+        <tr><td><code>group.consumer.assignors</code></td><td><code>uniform,range</code></td><td>New protocol: the strategies the broker offers. The first is the default.</td></tr>
+        <tr><td><code>group.min.session.timeout.ms</code>, <code>group.max.session.timeout.ms</code></td><td>6000, 1800000</td><td>Classic protocol: the range of session timeouts a client may ask for.</td></tr>
+        <tr><td><code>group.initial.rebalance.delay.ms</code></td><td>3000; the lab cluster sets 0</td><td>Classic protocol: wait for more members before the first rebalance of a new group. <span class="tag-unverified">unverified default</span></td></tr>
+        <tr><td><code>offsets.retention.minutes</code></td><td>10080 (7 days)</td><td>How long the offsets of an empty group are kept.</td></tr>
+        <tr><td><code>offsets.topic.num.partitions</code></td><td>50</td><td>Partition count of <code>__consumer_offsets</code>. Do not change it after the cluster has started.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>A slow batch removes the consumer from the group</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The consumer processes a batch for longer than <code>max.poll.interval.ms</code>. It is removed, another member takes its partitions and processes the same records again. Then the first one fails to commit.</dd>
+      <dt>You observe</dt><dd>A commit error that says the group has rebalanced. Repeated records. Rebalances every few minutes.</dd>
+      <dt>Fix</dt><dd>Lower <code>max.poll.records</code> so that a batch is always fast. Or raise <code>max.poll.interval.ms</code>. Do not move slow work to another thread without also pausing the partition, or you lose the back-pressure.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Rebalance storm</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The group spends most of its time rebalancing and little time processing. Lag grows.</dd>
+      <dt>Cause</dt><dd>A rolling deployment restarts members one after another, or members keep passing the poll interval, or the session timeout is too low for a network with short pauses.</dd>
+      <dt>Fix</dt><dd>Use the new protocol or <code>CooperativeStickyAssignor</code>. Set <code>group.instance.id</code> for deployments. Fix the slow processing.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>One bad record blocks a partition</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A record cannot be parsed or always fails in processing. The consumer throws, restarts, reads the same record, and throws again. This is a <strong>poison record</strong>.</dd>
+      <dt>You observe</dt><dd>Lag grows on one partition only. The committed offset does not move.</dd>
+      <dt>Fix</dt><dd>Catch the error, send the record to a separate topic for failed records (a dead-letter topic, module 08), commit, and continue. Decide in advance which errors deserve a retry.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Auto-commit loses records</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Your code hands records to a worker thread and calls <code>poll()</code> again. Auto-commit commits them. The process crashes before the worker has finished.</dd>
+      <dt>Result</dt><dd>Those records are never processed.</dd>
+      <dt>Fix</dt><dd>Set <code>enable.auto.commit=false</code> and commit only what is finished.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A new group skips existing data</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A new application starts and processes nothing, although the topic has data.</dd>
+      <dt>Cause</dt><dd><code>auto.offset.reset</code> is <code>latest</code> by default, so a group without offsets starts at the end. The lab shows it: 6,000 records in the topic, 0 read.</dd>
+      <dt>Fix</dt><dd>Set <code>earliest</code> for applications that must process the history.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The offsets of an idle group disappear</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A job that runs once a month starts from the wrong place.</dd>
+      <dt>Cause</dt><dd>The group was empty for more than <code>offsets.retention.minutes</code>, 7 days. Its offsets were deleted.</dd>
+      <dt>Fix</dt><dd>Raise the broker setting, or store the position yourself, or keep one member running.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>More consumers than partitions</h3>
+    <dl>
+      <dt>What breaks</dt><dd>You scale the application from 6 to 12 instances and throughput does not change.</dd>
+      <dt>Cause</dt><dd>The topic has 6 partitions. Six instances own one each. The other six own nothing.</dd>
+      <dt>Fix</dt><dd>Add partitions (remember the ordering cost from module 01), or make each consumer faster, or use share groups (module 10) when order does not matter.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against the lab cluster. Outputs are real, with wide columns cut.</p>
+  </div>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092
+k kafka-topics.sh --bootstrap-server $B --create --topic events --partitions 6 --replication-factor 3
+k kafka-producer-perf-test.sh --topic events --num-records 6000 --record-size 100 \
+  --throughput -1 --command-property bootstrap.servers=$B</code></pre></div>
+
+  <h3>Step 1. A new group starts at the end</h3>
+  <div class="code"><pre><code>k kafka-console-consumer.sh --bootstrap-server $B --topic events --group g-latest --timeout-ms 5000
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-latest</code></pre></div>
+  <pre class="out">Processed a total of 0 messages
+
+Consumer group 'g-latest' has no active members.
+GROUP      TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+g-latest   events  0          1361            1361            0
+g-latest   events  1          592             592             0
+g-latest   events  2          934             934             0
+g-latest   events  3          592             592             0
+g-latest   events  4          1480            1480            0
+g-latest   events  5          1041            1041            0</pre>
+  <p>The topic has 6,000 records and the group read none. It committed the end of each partition. Notice also that the partitions are uneven: the records had no key, so they went in groups, as module 02 showed.</p>
+
+  <h3>Step 2. Two consumers share the topic (classic protocol)</h3>
+  <p>Start one consumer in each of two containers, in the background.</p>
+  <div class="code"><pre><code>docker exec -d kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server $B \
+  --topic events --group g-classic --from-beginning --command-property client.id=c1
+docker exec -d kafka-2 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server $B \
+  --topic events --group g-classic --from-beginning --command-property client.id=c2
+
+# wait 12 seconds
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic --state</code></pre></div>
+  <pre class="out">GROUP      TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  CONSUMER-ID
+g-classic  events  3          592             592             0    c2-442e6189-…
+g-classic  events  4          1480            1480            0    c2-442e6189-…
+g-classic  events  5          1041            1041            0    c2-442e6189-…
+g-classic  events  0          1361            1361            0    c1-7b00d4f1-…
+g-classic  events  1          592             592             0    c1-7b00d4f1-…
+g-classic  events  2          934             934             0    c1-7b00d4f1-…
+
+GROUP      COORDINATOR (ID)    ASSIGNMENT-STRATEGY  STATE   #MEMBERS
+g-classic  kafka-1:19092 (1)   range                Stable  2</pre>
+  <p>Each consumer owns three partitions. The strategy is <code>range</code>, which gives each member a continuous block: 0 to 2 and 3 to 5.</p>
+
+  <h3>Step 3. The same with the new protocol</h3>
+  <div class="code"><pre><code>docker exec -d kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server $B \
+  --topic events --group g-new --from-beginning \
+  --command-property group.protocol=consumer --command-property client.id=n1
+docker exec -d kafka-2 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server $B \
+  --topic events --group g-new --from-beginning \
+  --command-property group.protocol=consumer --command-property client.id=n2
+
+# wait 12 seconds
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-new --state
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-new --members</code></pre></div>
+  <pre class="out">GROUP  COORDINATOR (ID)    ASSIGNMENT-STRATEGY  STATE   #MEMBERS
+g-new  kafka-1:19092 (1)   uniform              Stable  2
+
+GROUP  CONSUMER-ID             HOST         CLIENT-ID  #PARTITIONS
+g-new  wIfVdQS2SLCMn4Mqa2HbTw  /172.23.0.2  n2         3
+g-new  rB9ASMcrTDa1TxHsxFus2g  /172.23.0.4  n1         3</pre>
+  <p>The strategy is now <code>uniform</code>, chosen by the broker. The member ids are short ids given by the broker, not the long client-made ids of the classic group.</p>
+
+  <h3>Step 4. Stop one member</h3>
+  <div class="code"><pre><code>docker exec kafka-2 sh -c "pkill -f 'group g-classic'"
+# wait 8 seconds
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic --members</code></pre></div>
+  <pre class="out">GROUP      CONSUMER-ID       HOST         CLIENT-ID  #PARTITIONS
+g-classic  c1-7b00d4f1-…     /172.23.0.4  c1         6</pre>
+  <p>The remaining consumer owns all six partitions. The stopped one left cleanly, so the group did not have to wait for the 45-second session timeout.</p>
+
+  <h3>Step 5. Create lag and read it</h3>
+  <div class="code"><pre><code>docker exec kafka-1 sh -c "pkill -f ConsoleConsumer"; docker exec kafka-2 sh -c "pkill -f ConsoleConsumer"
+k kafka-producer-perf-test.sh --topic events --num-records 3000 --record-size 100 \
+  --throughput -1 --command-property bootstrap.servers=$B
+k kafka-consumer-groups.sh --bootstrap-server $B --describe --group g-classic</code></pre></div>
+  <pre class="out">Consumer group 'g-classic' has no active members.
+GROUP      TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+g-classic  events  0          1361            1657            296
+g-classic  events  1          592             928             336
+g-classic  events  2          934             1230            296
+g-classic  events  3          592             1184            592
+g-classic  events  4          1480            2072            592
+g-classic  events  5          1041            1929            888</pre>
+  <p>The lag adds up to 3,000, the number of records written while no consumer ran. This command is the first thing to run when someone says "the consumer is behind".</p>
+
+  <h3>Step 6. Move a group's position</h3>
+  <p>A group must have no active members before you reset it. Always look at the plan first with <code>--dry-run</code>.</p>
+  <div class="code"><pre><code>k kafka-consumer-groups.sh --bootstrap-server $B --group g-classic --topic events \
+  --reset-offsets --to-earliest --dry-run
+k kafka-consumer-groups.sh --bootstrap-server $B --group g-classic --topic events \
+  --reset-offsets --to-earliest --execute
+
+# go back 100 records on one partition of another group
+k kafka-consumer-groups.sh --bootstrap-server $B --group g-new --topic events:0 \
+  --reset-offsets --shift-by -100 --execute</code></pre></div>
+  <pre class="out">GROUP      TOPIC   PARTITION  NEW-OFFSET
+g-classic  events  3          0
+g-classic  events  4          0
+…
+g-new      events  0          1261</pre>
+  <p>After the first reset, partition 0 of <code>g-classic</code> shows a lag of 1,657: the whole partition. Other useful targets are <code>--to-latest</code>, <code>--to-datetime</code> and <code>--to-offset</code>.</p>
+
+  <h3>Step 7. Look at the offsets topic</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --describe --topic __consumer_offsets | head -1</code></pre></div>
+  <pre class="out">Topic: __consumer_offsets  PartitionCount: 50  ReplicationFactor: 3
+Configs: compression.type=producer,min.insync.replicas=2,cleanup.policy=compact,segment.bytes=10485760</pre>
+  <p>Fifty partitions, compacted, with small segments so that the cleaner from module 01 can run often.</p>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Kafka pushes records to consumers.</td><td>Consumers pull. The consumer controls its own speed.</td></tr>
+        <tr><td>The committed offset is the last record processed.</td><td>It is the next record to read: the last processed offset plus one.</td></tr>
+        <tr><td>More consumers always means more throughput.</td><td>Only up to the partition count. Extra members of a group are idle.</td></tr>
+        <tr><td>Auto-commit gives at-least-once.</td><td>Only if your code finishes every record before the next <code>poll()</code>. With worker threads it can lose records.</td></tr>
+        <tr><td>Two groups share the records between them.</td><td>Each group gets every record. Sharing happens only inside one group.</td></tr>
+        <tr><td>A heartbeat proves the consumer is working.</td><td>It proves the process is alive. A stuck processing loop still sends heartbeats; the poll interval catches that.</td></tr>
+        <tr><td>Lag in records tells you how late you are.</td><td>It tells you how many records. How late depends on the write rate. Measure lag in time too.</td></tr>
+        <tr><td>A consumer can be shared between threads.</td><td>It cannot. Use one consumer for each thread, or one polling thread that hands work to others.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>Each record takes 2 seconds to process. How do you design the consumer?</summary><div class="answer">
+    <p>First check the numbers: 500 records in one poll at 2 seconds each is 1,000 seconds, far past the 5-minute poll interval. So lower <code>max.poll.records</code> to a value that finishes well inside the interval, for example 50.</p>
+    <p>For more throughput, add partitions and consumers. If that is not enough, process records in a worker pool inside each consumer: pause the partition, hand out the records, call <code>poll()</code> to keep the membership alive, commit only the offset below which all records are finished, then resume. Keep records with the same key on the same worker if order matters.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you make processing safe to repeat?</summary><div class="answer">
+    <p>At-least-once is the practical default, so repeats will happen. Give every event a unique id. In the database, write the result and the event id in one transaction, with a unique constraint on the id. A repeat then fails the constraint and is skipped.</p>
+    <p>Other options: make the operation naturally repeatable ("set balance to 50" instead of "add 10"), or store the Kafka offset together with the result and skip anything at or below it.</p>
+  </div></details>
+
+  <details class="qa"><summary>Should a new service use the classic or the new group protocol?</summary><div class="answer">
+    <p>On Kafka 4 brokers with a 4.x Java client, use the new one: only affected partitions stop, a slow member cannot hold the group, and timeouts are managed in one place on the broker.</p>
+    <p>Check two things first. Clients in other languages may not support it yet. And a custom client-side assignor does not carry over, because the broker now computes the assignment.</p>
+  </div></details>
+
+  <details class="qa"><summary>What do you alert on for a consumer group?</summary><div class="answer">
+    <p>Lag in time, not only in records, compared with what the business accepts and with the retention time. The rate of rebalances. The time since the last commit for each partition, which catches a poison record. And the number of members compared with the expected number.</p>
+    <p>A fixed threshold on record lag gives false alarms on busy topics and misses problems on quiet ones.</p>
+  </div></details>
+
+  <details class="qa"><summary>A deployment causes 10 minutes of duplicates each time. Why, and what do you change?</summary><div class="answer">
+    <p>Each restart triggers rebalances. With an eager strategy, every member gives up its partitions; anything processed but not yet committed is processed again by the new owner.</p>
+    <p>Changes, in order of effect: commit when partitions are revoked; use the new protocol or the cooperative strategy so that only moved partitions are affected; set <code>group.instance.id</code> so that a quick restart is not a rebalance at all; and shut down cleanly so that the consumer commits and leaves.</p>
+  </div></details>
+
+  <details class="qa"><summary>When does reading from a follower make sense?</summary><div class="answer">
+    <p>In a cluster that spans zones or regions, where traffic between zones costs money or time. With <code>client.rack</code> set on the consumer and the matching selector on the brokers, the consumer fetches from a follower in its own zone.</p>
+    <p>The cost is a small extra delay, because a follower learns the high watermark slightly after the leader.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. A topic has 4 partitions and a group has 6 consumers. How many consumers receive records?</summary><div class="answer"><p>Four. Two are idle.</p></div></details>
+  <details class="qa"><summary>2. A consumer has processed offset 41. Which offset does it commit?</summary><div class="answer"><p>42: the next record to read.</p></div></details>
+  <details class="qa"><summary>3. Where are committed offsets stored?</summary><div class="answer"><p>In the compacted internal topic <code>__consumer_offsets</code>, which has 50 partitions.</p></div></details>
+  <details class="qa"><summary>4. A new group reads a topic that already has data and receives nothing. Why?</summary><div class="answer"><p><code>auto.offset.reset</code> is <code>latest</code> by default, so the group starts at the end.</p></div></details>
+  <details class="qa"><summary>5. Which order of process and commit gives at-least-once?</summary><div class="answer"><p>Process first, then commit.</p></div></details>
+  <details class="qa"><summary>6. What does <code>max.poll.interval.ms</code> protect against?</summary><div class="answer"><p>A consumer that is alive but stuck or too slow: it sends heartbeats but does not call <code>poll()</code>.</p></div></details>
+  <details class="qa"><summary>7. Name two differences between the classic and the new group protocol.</summary><div class="answer"><p>In the new protocol the broker computes the assignment, and only the affected partitions stop during a change. Session and heartbeat timeouts are set on the broker.</p></div></details>
+  <details class="qa"><summary>8. What does <code>group.instance.id</code> change?</summary><div class="answer"><p>The member becomes static. A restart that is shorter than the session timeout causes no rebalance.</p></div></details>
+  <details class="qa"><summary>9. Which command shows the lag of a group?</summary><div class="answer"><p><code>kafka-consumer-groups.sh --describe --group</code> followed by the group name.</p></div></details>
+  <details class="qa"><summary>10. What must be true before you can reset a group's offsets with the tool?</summary><div class="answer"><p>The group has no active members.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="02-producers.html">← 02 Producers</a>
+    <a class="btn primary" href="04-replication.html">04 Replication →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- rebalance demo ----------
+(function () {
+  const PARTS = 6, MAX = 4;
+  const grid = document.getElementById('rb-grid');
+  const out = document.getElementById('rb-out');
+  const styleBtns = [...document.querySelectorAll('[data-style]')];
+  let style = 'incremental';
+  let members = [0, 1];            // consumer numbers, in join order
+  let owner = [0, 0, 0, 1, 1, 1];  // owner[p] = consumer number
+  let nextId = 2;
+  let timer = null;
+
+  function draw(paused) {
+    grid.innerHTML = '';
+    for (let p = 0; p < PARTS; p++) {
+      const c = document.createElement('div');
+      const slot = members.indexOf(owner[p]);
+      c.className = 'cell own-' + (slot % MAX) + (paused && paused.has(p) ? ' paused' : '');
+      c.innerHTML = 'partition ' + p + '<br>' + (paused && paused.has(p) ? 'stopped' : 'consumer ' + (owner[p] + 1));
+      c.style.animation = 'none';
+      grid.appendChild(c);
+    }
+  }
+
+  // Keep partitions where they are when possible; move only the surplus.
+  function reassign() {
+    const next = owner.slice();
+    const base = Math.floor(PARTS / members.length);
+    let extra = PARTS % members.length;
+    const quota = {};
+    members.forEach((m) => { quota[m] = base + (extra-- > 0 ? 1 : 0); });
+    const count = {};
+    members.forEach((m) => { count[m] = 0; });
+    const free = [];
+    for (let p = 0; p < PARTS; p++) {
+      const o = next[p];
+      if (members.includes(o) && count[o] < quota[o]) count[o]++;
+      else free.push(p);
+    }
+    free.forEach((p) => {
+      const m = members.find((x) => count[x] < quota[x]);
+      next[p] = m; count[m]++;
+    });
+    return next;
+  }
+
+  function change(text) {
+    clearTimeout(timer);
+    const before = owner.slice();
+    const after = reassign();
+    const moved = new Set();
+    for (let p = 0; p < PARTS; p++) if (before[p] !== after[p]) moved.add(p);
+    const paused = style === 'eager' ? new Set([0, 1, 2, 3, 4, 5]) : moved;
+    // During the rebalance, show the old owners with the paused partitions marked.
+    const stillThere = (p) => members.includes(before[p]);
+    owner = before.map((o, p) => (stillThere(p) ? o : after[p]));
+    draw(paused);
+    out.innerHTML = text + '\nRebalance in progress: <span class="warn">' + paused.size + ' of 6 partitions stopped.</span>';
+    const finish = () => {
+      owner = after; draw(null);
+      out.innerHTML = text + '\nDone. ' + moved.size + ' partition' + (moved.size === 1 ? '' : 's') + ' changed owner. '
+        + (style === 'eager'
+          ? '<span class="warn">All 6 had to stop</span>, although only ' + moved.size + ' moved.'
+          : '<b>Only those ' + moved.size + ' stopped.</b> The others kept working.');
+    };
+    if (KB.reducedMotion) finish(); else timer = setTimeout(finish, 1600);
+  }
+
+  document.getElementById('rb-add').addEventListener('click', () => {
+    if (members.length >= MAX) { out.textContent = 'This demo stops at four consumers.'; return; }
+    const id = nextId++;
+    members.push(id);
+    change('Consumer ' + (id + 1) + ' joined. The group has ' + members.length + ' members.');
+  });
+  document.getElementById('rb-remove').addEventListener('click', () => {
+    if (members.length <= 1) { out.textContent = 'The group needs at least one consumer.'; return; }
+    const id = members.pop();
+    change('Consumer ' + (id + 1) + ' left. The group has ' + members.length + ' member' + (members.length === 1 ? '' : 's') + '.');
+  });
+  styleBtns.forEach((b) => b.addEventListener('click', () => {
+    style = b.dataset.style;
+    styleBtns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  }));
+  draw(null);
+  out.textContent = 'Two consumers, three partitions each. Add or remove a consumer.';
+})();
+
+// ---------- commit timing demo ----------
+(function () {
+  const first = document.getElementById('cm-first');
+  const second = document.getElementById('cm-second');
+  const out = document.getElementById('cm-out');
+  const modes = [...document.querySelectorAll('[data-mode]')];
+  let mode = 'after';
+  let timers = [];
+
+  function cell(lane, text, cls) {
+    const c = document.createElement('div');
+    c.className = 'cell ' + cls;
+    c.textContent = text;
+    lane.appendChild(c);
+  }
+  function at(step, fn) { timers.push(setTimeout(fn, KB.reducedMotion ? 0 : step * 1100)); }
+
+  function run() {
+    timers.forEach(clearTimeout); timers = [];
+    first.innerHTML = ''; second.innerHTML = '';
+    const lines = [];
+    const say = (t) => { lines.push(t); out.innerHTML = lines.join('\n'); };
+    out.textContent = '';
+    if (mode === 'before') {
+      at(0, () => say('1. poll() returns records 0 to 4. The consumer commits offset 5 at once.'));
+      at(1, () => { [0, 1, 2].forEach((n) => cell(first, n + ' done', 'hit')); say('2. It processes records 0, 1 and 2.'); });
+      at(2, () => { [3, 4].forEach((n) => cell(first, n + ' not done', 'gone')); say('3. Crash. Records 3 and 4 were never processed.'); });
+      at(3, () => { cell(second, '5 …', 'new'); say('4. After the restart, the consumer starts at the committed offset, 5.\n<span class="warn">Result: records 3 and 4 are lost. This is at-most-once.</span>'); });
+    } else {
+      at(0, () => say('1. poll() returns records 0 to 4. Nothing is committed yet.'));
+      at(1, () => { [0, 1, 2].forEach((n) => cell(first, n + ' done', 'hit')); say('2. It processes records 0, 1 and 2.'); });
+      at(2, () => { [3, 4].forEach((n) => cell(first, n + ' not done', '')); say('3. Crash, before the commit. The committed offset is still 0.'); });
+      at(3, () => { [0, 1, 2].forEach((n) => cell(second, n + ' again', 'new')); [3, 4].forEach((n) => cell(second, n + ' done', 'hit')); say('4. After the restart, the consumer starts at offset 0.\n<b>Result: nothing is lost,</b> <span class="warn">but records 0, 1 and 2 are processed twice.</span> This is at-least-once.'); });
+    }
+  }
+  modes.forEach((b) => b.addEventListener('click', () => {
+    mode = b.dataset.mode;
+    modes.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  }));
+  document.getElementById('cm-run').addEventListener('click', run);
+})();
+
+// ---------- lag demo ----------
+(function () {
+  const p = document.getElementById('lg-p'), c = document.getElementById('lg-c'), r = document.getElementById('lg-r');
+  const growth = document.getElementById('lg-growth'), hour = document.getElementById('lg-hour'), loss = document.getElementById('lg-loss');
+  const out = document.getElementById('lg-out');
+  const num = (n) => Math.round(n).toLocaleString('en-US');
+  const dur = (hours) => (hours >= 48 ? (hours / 24).toFixed(1) + ' days' : hours.toFixed(1) + ' hours');
+
+  function draw() {
+    const prod = Number(p.value), cons = Number(c.value), days = Number(r.value);
+    const diff = prod - cons;
+    if (diff <= 0) {
+      growth.textContent = diff === 0 ? '0' : '−' + num(-diff * 3600);
+      hour.textContent = 'not behind';
+      loss.textContent = 'never';
+      out.innerHTML = diff === 0
+        ? 'The consumer keeps up exactly. It has no spare capacity: any pause creates lag that never goes away.'
+        : '<b>The consumer is faster than the producer.</b> It can clear a backlog at ' + num(-diff) + ' records each second.';
+      return;
+    }
+    const behindHours = (diff * 24) / prod;          // time-lag after 24 hours
+    const lossHours = (days * 24 * prod) / diff;     // when time-lag equals retention
+    growth.textContent = '+' + num(diff * 3600);
+    hour.textContent = dur(behindHours);
+    loss.textContent = dur(lossHours);
+    out.innerHTML = 'The lag grows by ' + num(diff) + ' records each second.\nAfter ' + dur(lossHours)
+      + ', the oldest unread record is ' + days + (days === 1 ? ' day' : ' days') + ' old, and retention deletes it.\n'
+      + '<span class="warn">From then on the consumer loses data without any error</span> unless auto.offset.reset is "none".';
+  }
+  [p, c, r].forEach((el) => el.addEventListener('change', draw));
+  draw();
+})();
+</script>
+<script src="extras/03.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

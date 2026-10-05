@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>06 Transactions and exactly-once · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .cell.small { min-width: 38px; height: 38px; font-size: .8rem; }
+  .cell.safe { background: var(--read-soft); border-color: var(--read); }
+  .cell.marker { background: var(--primary); border-color: var(--primary); color: var(--bg); font-weight: 600; }
+  .cell.aborted { background: var(--gone-soft); border-color: var(--gone); text-decoration: line-through; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 06 Transactions</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 06 · Day 5 · Kafka 4.3</div>
+  <h1>Transactions and exactly-once</h1>
+  <p class="lede">A transaction makes several writes succeed or fail together. With it, an application that reads from Kafka and writes to Kafka can give each input exactly one effect, even through crashes. The guarantee is real, and it stops at the edge of Kafka.</p>
+
+  <div class="lab-panel" id="tx-demo" style="margin:0">
+    <h3>Try it: one partition, two kinds of reader</h3>
+    <p class="hint">Write records inside a transaction, then commit, abort, or crash. Watch what each reader can see.</p>
+    <div class="controls">
+      <button class="btn primary" type="button" id="tx-send">Write a record</button>
+      <button class="btn" type="button" id="tx-commit">Commit</button>
+      <button class="btn" type="button" id="tx-abort">Abort</button>
+      <button class="btn" type="button" id="tx-crash">Producer crashes</button>
+      <button class="btn" type="button" id="tx-reset">Start again</button>
+    </div>
+    <div class="lane"><div class="lane-name">partition log</div><div class="lane-cells" id="tx-log"></div></div>
+    <div class="lane"><div class="lane-name">read_uncommitted sees</div><div class="lane-cells" id="tx-ru"></div></div>
+    <div class="lane"><div class="lane-name">read_committed sees</div><div class="lane-cells" id="tx-rc"></div></div>
+    <div class="legend">
+      <span><i style="background:var(--write)"></i>in an open transaction</span>
+      <span><i style="background:var(--read-soft);border-color:var(--read)"></i>committed</span>
+      <span><i style="background:var(--gone-soft);border-color:var(--gone)"></i>aborted</span>
+      <span><i style="background:var(--primary)"></i>marker: C commit, A abort</span>
+    </div>
+    <div class="readout" id="tx-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>Module 02 showed that idempotence stops duplicates from one producer's retries to one partition. Many applications need more. A typical one reads a record from an input topic, computes something, writes results to one or more output topics, and commits its input offset. That is three or more writes. If the application crashes between them, some are done and some are not, and after a restart the input is processed again.</p>
+  <p>A <strong>transaction</strong> groups those writes. Either all of them take effect or none does. The group can include records for several partitions and topics, and also the consumer group's offset commit, because an offset commit is itself a record in a Kafka topic.</p>
+  <p>Readers take part too. A consumer with <code>isolation.level=read_committed</code> does not receive records from a transaction until it has committed, and never receives records from one that was aborted.</p>
+  <p><strong>Exactly-once</strong> in Kafka means this: for a read-process-write application, each input record affects the output topics and the committed offset exactly one time. It does not mean that your code runs once, and it does not cover anything outside Kafka.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> A transaction writes records and offsets as one all-or-nothing unit, marks the outcome in the log, and readers that ask for committed data skip everything else.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+    <p>Records of a transaction are written to the log at once, like any other records. They are not held back somewhere. What comes later is a small extra record, a <strong>marker</strong>, that says "the transaction of producer X is committed" or "is aborted". Readers decide what to show by looking at the markers.</p>
+    <ul>
+      <li>A <strong>read_uncommitted</strong> reader, the default, shows every data record as soon as it is replicated. It ignores the outcome.</li>
+      <li>A <strong>read_committed</strong> reader stops at the first record of the oldest transaction that is still open. That position is the <strong>last stable offset</strong>. When the marker arrives, it moves on, and drops the records if the marker says abort.</li>
+    </ul>
+    <p>Use the demo at the top. Write three records and commit: both readers show three. Write two more and press "Producer crashes": the first reader shows five, the second still shows three and waits. That waiting is the price of the guarantee, and it is the first thing that goes wrong in production.</p>
+
+    <h3>The pattern transactions were built for</h3>
+    <p>Read from topic A, process, write to topic B, and record progress on A. Without a transaction, a crash at the wrong moment gives duplicate output. Step through both versions:</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="rpw-demo">
+    <h3>Step through it: read, process, write, with a crash</h3>
+    <div class="controls">
+      <span id="rw-lbl">Output and offset are written</span>
+      <div class="seg" role="group" aria-labelledby="rw-lbl">
+        <button type="button" data-rw="plain" aria-pressed="false">separately</button>
+        <button type="button" data-rw="txn" aria-pressed="true">in one transaction</button>
+      </div>
+      <button class="btn primary" type="button" id="rw-run">Run with a crash</button>
+    </div>
+    <div class="lane"><div class="lane-name">input topic</div><div class="lane-cells" id="rw-in"></div></div>
+    <div class="lane"><div class="lane-name">output, as read_committed sees it</div><div class="lane-cells" id="rw-out"></div></div>
+    <div class="readout" id="rw-msg" aria-live="polite">Choose a mode and press the button.</div>
+  </div>
+
+  <div class="col">
+    <h3>Where the guarantee stops</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Covered by a Kafka transaction</th><th>Not covered</th></tr></thead>
+        <tbody>
+          <tr><td>Records written to any topics in the same cluster.</td><td>A row written to a database.</td></tr>
+          <tr><td>The consumer group's offset commit.</td><td>An email, a payment request, any call to another service.</td></tr>
+          <tr><td>State kept by Kafka Streams in changelog topics (module 07).</td><td>Records written to a different Kafka cluster.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>If processing has an effect outside Kafka, a retried transaction repeats that effect. For those cases you still need the outbox pattern or an operation that is safe to repeat.</p>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>The parts</h3>
+    <ul>
+      <li><strong><code>transactional.id</code></strong>: a name you give the producer. It must be stable across restarts of the same logical instance. It is how Kafka recognises "the same producer, restarted".</li>
+      <li><strong>Transaction coordinator</strong>: a broker that tracks the state of each transaction. It is the leader of one partition of the internal topic <code>__transaction_state</code>; the hash of the transactional id picks which of the 50 partitions.</li>
+      <li><strong>Producer id and epoch</strong>: the numbers from module 02. With a transactional id, the same producer id survives restarts and the epoch goes up.</li>
+      <li><strong>Markers</strong>: control records written to each partition that took part. A marker uses one offset.</li>
+    </ul>
+
+    <h3>One transaction, step by step</h3>
+    <ol class="steps">
+      <li class="on"><code>initTransactions()</code>. The producer finds its coordinator and registers its transactional id. The coordinator raises the epoch. Any older process with the same id is now <strong>fenced</strong>: its next request is refused. The coordinator also finishes any transaction the old process left open.</li>
+      <li class="on"><code>beginTransaction()</code>. This only changes the producer's local state.</li>
+      <li class="on"><code>send()</code>. Records go to the partition leaders as usual, flagged as transactional. The coordinator learns which partitions take part.</li>
+      <li class="on"><code>sendOffsetsToTransaction()</code>. The consumer's offsets are added to the transaction. They are written to <code>__consumer_offsets</code> but do not count until the commit.</li>
+      <li class="on"><code>commitTransaction()</code>. The coordinator writes "prepare commit" to its own log. From this moment the outcome is decided, even if the coordinator crashes.</li>
+      <li class="on">The coordinator sends a commit marker to every partition that took part, including the offsets partition.</li>
+      <li class="on">The coordinator writes "complete commit". The transaction is finished.</li>
+    </ol>
+    <p>Steps 5 to 7 are a two-phase commit. Step 5 is the decision. Steps 6 and 7 can be repeated safely after a failure, by the same coordinator or by its replacement.</p>
+
+    <h3>How a read_committed consumer filters</h3>
+    <p>The broker returns records only up to the last stable offset. For aborted transactions, each segment has a small file, the transaction index, that lists the offset ranges of aborted transactions. The broker sends that list with the data, and the consumer drops those records. <span class="tag-unverified">unverified: the index file was not inspected in the lab</span></p>
+
+    <h3>The transaction timeout</h3>
+    <p>If a producer starts a transaction and then disappears, its records would block committed readers for ever. So every transaction has a timeout, <code>transaction.timeout.ms</code>, 1 minute by default. When it passes, the coordinator aborts the transaction and raises the epoch, so the old producer cannot continue. The broker refuses a timeout above <code>transaction.max.timeout.ms</code>, 15 minutes.</p>
+
+    <h3>The epoch rises with every transaction</h3>
+    <p>In the lab, the producer epoch was 3 after three transactions and 5 after two more. In Kafka 4 the coordinator raises the epoch at the end of each transaction, which closes a gap where a late message from one transaction could be mistaken for part of the next. <span class="tag-unverified">unverified: the lab showed the numbers; the reason is from memory</span></p>
+
+    <h3>What it costs</h3>
+    <p>Each transaction adds a few requests to the coordinator and one marker for each partition. For large transactions the cost is small. For one record in each transaction it is large. The usual practice is to commit a batch every 100 milliseconds to a few seconds. A longer interval gives more throughput and makes committed readers wait longer.</p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>Broker defaults were read from the lab cluster. Client defaults are from the Kafka 4.3 reference pages checked in modules 02 and 03.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Config</th><th>Where</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>transactional.id</code></td><td>Producer</td><td>null</td><td>Turns on transactions and names this producer.</td><td>Set a value that is unique for each running instance and the same after a restart, for example the application name plus the instance number.</td></tr>
+        <tr><td><code>transaction.timeout.ms</code></td><td>Producer</td><td>60000 (1 minute)</td><td>The coordinator aborts a transaction that stays open longer than this.</td><td>Raise it when one batch of processing can take long. Lower it so that a crashed producer blocks readers for less time.</td></tr>
+        <tr><td><code>enable.idempotence</code></td><td>Producer</td><td><code>true</code></td><td>Required for transactions.</td><td>Leave it on.</td></tr>
+        <tr><td><code>isolation.level</code></td><td>Consumer</td><td><code>read_uncommitted</code></td><td>Whether the consumer receives records of open and aborted transactions.</td><td>Set <code>read_committed</code> on every consumer of a topic that is written with transactions. The default gives no protection.</td></tr>
+        <tr><td><code>enable.auto.commit</code></td><td>Consumer</td><td><code>true</code></td><td>Auto-commit of offsets.</td><td>Set <code>false</code> in a read-process-write application: the offsets must go through the transaction.</td></tr>
+        <tr><td><code>transaction.max.timeout.ms</code></td><td>Broker</td><td>900000 (15 minutes)</td><td>The largest timeout a producer may ask for.</td><td>Rarely. A higher limit lets one bad client block readers for longer.</td></tr>
+        <tr><td><code>transactional.id.expiration.ms</code></td><td>Broker</td><td>604800000 (7 days)</td><td>The coordinator forgets a transactional id that has been idle this long.</td><td>Raise it for producers that run less than once a week.</td></tr>
+        <tr><td><code>transaction.abort.timed.out.transaction.cleanup.interval.ms</code></td><td>Broker</td><td>10000 (10 seconds)</td><td>How often the coordinator looks for transactions past their timeout.</td><td>Rarely.</td></tr>
+        <tr><td><code>transaction.remove.expired.transaction.cleanup.interval.ms</code></td><td>Broker</td><td>3600000 (1 hour)</td><td>How often expired transactional ids are removed.</td><td>Rarely.</td></tr>
+        <tr><td><code>transaction.state.log.replication.factor</code></td><td>Broker</td><td>3</td><td>Copies of <code>__transaction_state</code>.</td><td>Keep 3. With fewer brokers than this, transactions cannot start.</td></tr>
+        <tr><td><code>transaction.state.log.min.isr</code></td><td>Broker</td><td>2</td><td>In-sync minimum for that topic.</td><td>Keep 2.</td></tr>
+        <tr><td><code>transaction.state.log.num.partitions</code></td><td>Broker</td><td>50</td><td>Partitions of that topic.</td><td>Do not change after the cluster has started.</td></tr>
+        <tr><td><code>transaction.state.log.segment.bytes</code></td><td>Broker</td><td>104857600 (100 MiB)</td><td>Segment size of that topic.</td><td>Rarely.</td></tr>
+        <tr><td><code>transaction.partition.verification.enable</code></td><td>Broker</td><td><code>true</code></td><td>The partition leader checks with the coordinator that a transaction is really open before it accepts transactional records.</td><td>Leave it on. It prevents transactions that hang for ever.</td></tr>
+        <tr><td><code>producer.id.expiration.ms</code></td><td>Broker</td><td>86400000 (1 day)</td><td>How long a partition remembers an idle producer id for duplicate detection.</td><td>Rarely.</td></tr>
+        <tr><td><code>transaction.two.phase.commit.enable</code></td><td>Broker</td><td><code>false</code></td><td>Lets an outside coordinator, such as a database, decide the outcome of a Kafka transaction.</td><td>Only for a product that asks for it. <span class="tag-unverified">unverified</span></td></tr>
+        <tr><td><code>processing.guarantee</code></td><td>Kafka Streams</td><td><code>at_least_once</code></td><td><code>exactly_once_v2</code> makes Streams use transactions for you.</td><td>Module 07. <span class="tag-unverified">unverified default</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>A producer dies with a transaction open</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Committed readers of every partition in that transaction stop at its first record. Later records from other producers wait behind it.</dd>
+      <dt>You observe</dt><dd>Lag grows for <code>read_committed</code> consumers while <code>read_uncommitted</code> consumers keep up. <code>kafka-transactions.sh describe</code> shows the state <code>Ongoing</code>. In the lab: 68 records visible to one reader, 30 to the other.</dd>
+      <dt>What happens next</dt><dd>After <code>transaction.timeout.ms</code> the coordinator aborts it. In the lab, with a 40-second timeout, the state changed to <code>CompleteAbort</code> about 45 seconds after the transaction began: the timeout plus the coordinator's 10-second check. If the producer restarts sooner with the same transactional id, <code>initTransactions()</code> aborts it at once.</dd>
+      <dt>Fix</dt><dd>Keep the timeout as low as your processing allows. Restart crashed instances quickly with the same id.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The producer is fenced</h3>
+    <dl>
+      <dt>You observe</dt><dd>A "producer fenced" or "invalid producer epoch" error on send or commit.</dd>
+      <dt>Cause</dt><dd>Another process started with the same transactional id, or the coordinator aborted this producer's transaction after a timeout.</dd>
+      <dt>Fix</dt><dd>This error is final for that producer object. Close it and exit or create a new one. If two live instances share an id by mistake, they will fence each other in turn: give each instance its own id.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Processing takes longer than the timeout</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The coordinator aborts the transaction while your code is still working. The commit fails, the batch is processed again, and it times out again.</dd>
+      <dt>Fix</dt><dd>Make batches smaller with <code>max.poll.records</code>, or raise <code>transaction.timeout.ms</code>. Both limits apply: the batch must also finish within <code>max.poll.interval.ms</code>.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A consumer shows aborted data</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A downstream system receives records that were rolled back.</dd>
+      <dt>Cause</dt><dd>The consumer uses the default <code>read_uncommitted</code>. Transactions on the producer side protect nobody unless readers ask for committed data.</dd>
+      <dt>Fix</dt><dd>Set <code>isolation.level=read_committed</code>. Check every consumer of the topic, including connectors and tools.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Duplicates in an external system</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The application sends an email or writes a database row during processing, the transaction aborts, and the retry does it again.</dd>
+      <dt>Cause</dt><dd>The transaction covers only Kafka.</dd>
+      <dt>Fix</dt><dd>Move the outside effect behind a topic: write a "send email" record in the transaction, and let a separate consumer send it with an id that the receiver can use to ignore repeats.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The transaction coordinator is not available</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Producers cannot start or commit transactions. Plain producers are not affected.</dd>
+      <dt>Cause</dt><dd>The partition of <code>__transaction_state</code> for that id has no leader or is below its in-sync minimum.</dd>
+      <dt>Fix</dt><dd>Treat it like any partition in that state (module 04). This is why the internal topic needs 3 copies.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Record counts and offsets do not match</h3>
+    <dl>
+      <dt>You observe</dt><dd>A topic's end offset is higher than the number of records consumers received. In the lab: 30 records, end offset 33.</dd>
+      <dt>Cause</dt><dd>Each marker uses an offset. Aborted records also use offsets and are not delivered.</dd>
+      <dt>Fix</dt><dd>Nothing is wrong. Do not use offset arithmetic to count records on transactional topics.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against the lab cluster. The performance tool can write in transactions, so no code is needed.</p>
+  </div>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092
+k kafka-topics.sh --bootstrap-server $B --create --topic payments --partitions 1 --replication-factor 3</code></pre></div>
+
+  <h3>Step 1. Write 30 records in three transactions</h3>
+  <p>Ten records each second, and a commit every second.</p>
+  <div class="code"><pre><code>k kafka-producer-perf-test.sh --topic payments --num-records 30 --record-size 20 --throughput 10 \
+  --transactional-id pay-1 --transaction-duration-ms 1000 --command-property bootstrap.servers=$B
+k kafka-get-offsets.sh --bootstrap-server $B --topic payments</code></pre></div>
+  <pre class="out">30 records sent, 9.9 records/sec …
+payments:0:33</pre>
+  <p>Thirty records, but the end offset is 33. The three extra offsets are the commit markers.</p>
+
+  <h3>Step 2. See the transaction in the log</h3>
+  <div class="code"><pre><code>k kafka-dump-log.sh --files /tmp/kraft-combined-logs/payments-0/00000000000000000000.log | grep baseOffset | head -3
+k kafka-dump-log.sh --print-data-log --files /tmp/kraft-combined-logs/payments-0/00000000000000000000.log | grep endTxnMarker</code></pre></div>
+  <pre class="out">baseOffset: 0 lastOffset: 1 count: 2 baseSequence: 0 … producerId: 1000 producerEpoch: 0 isTransactional: true isControl: false
+baseOffset: 2 lastOffset: 2 count: 1 baseSequence: 2 … producerId: 1000 producerEpoch: 0 isTransactional: true isControl: false
+…
+| offset: 12 … endTxnMarker: COMMIT coordinatorEpoch: 0
+| offset: 24 … endTxnMarker: COMMIT coordinatorEpoch: 0</pre>
+  <p>Data batches carry <code>isTransactional: true</code>. The markers sit at offsets 12, 24 and 32.</p>
+
+  <h3>Step 3. Ask the coordinator</h3>
+  <div class="code"><pre><code>k kafka-transactions.sh --bootstrap-server $B list
+k kafka-transactions.sh --bootstrap-server $B describe --transactional-id pay-1</code></pre></div>
+  <pre class="out">TransactionalId  Coordinator  ProducerId  TransactionState
+pay-1            1            1000        CompleteCommit
+
+CoordinatorId  TransactionalId  ProducerId  ProducerEpoch  TransactionState  TransactionTimeoutMs
+1              pay-1            1000        3              CompleteCommit    60000</pre>
+  <p>Broker 1 is the coordinator for this id. The epoch is 3 after three transactions.</p>
+
+  <h3>Step 4. Abandon a transaction</h3>
+  <p>Start a producer whose transaction would last 5 minutes, with a timeout of 40 seconds, and kill it after 8 seconds without any clean-up.</p>
+  <div class="code"><pre><code>docker exec -d kafka-2 /opt/kafka/bin/kafka-producer-perf-test.sh --topic payments \
+  --num-records 100000 --record-size 20 --throughput 5 --transactional-id pay-2 \
+  --transaction-duration-ms 300000 --command-property bootstrap.servers=$B transaction.timeout.ms=40000
+# wait 8 seconds
+docker exec kafka-2 sh -c "pkill -9 -f 'transactional-id pay-2'"
+
+k kafka-transactions.sh --bootstrap-server $B describe --transactional-id pay-2
+for iso in read_uncommitted read_committed; do
+  k kafka-console-consumer.sh --bootstrap-server $B --topic payments --from-beginning \
+    --isolation-level $iso --timeout-ms 5000 2>&1 | tail -1
+done</code></pre></div>
+  <pre class="out">CoordinatorId  TransactionalId  ProducerId  ProducerEpoch  TransactionState  TransactionTimeoutMs  …  TopicPartitions
+3              pay-2            2000        0              Ongoing           40000                    payments-0
+
+read_uncommitted:  Processed a total of 68 messages
+read_committed:    Processed a total of 30 messages</pre>
+  <p>The dead producer wrote 38 records. The default reader received them. The committed reader stopped before them, and would also not see anything written after them by other producers.</p>
+
+  <h3>Step 5. Watch the coordinator clean up</h3>
+  <div class="code"><pre><code># wait until 40 seconds after the transaction began, then:
+k kafka-transactions.sh --bootstrap-server $B describe --transactional-id pay-2
+k kafka-dump-log.sh --print-data-log --files /tmp/kraft-combined-logs/payments-0/00000000000000000000.log | grep endTxnMarker | tail -1
+k kafka-get-offsets.sh --bootstrap-server $B --topic payments</code></pre></div>
+  <pre class="out">… pay-2  2000  …  CompleteAbort
+
+| offset: 71 … endTxnMarker: ABORT coordinatorEpoch: 0
+payments:0:72
+
+read_uncommitted:  68 messages
+read_committed:    30 messages</pre>
+  <p>The coordinator wrote an abort marker at offset 71. The committed reader is no longer blocked, and it still receives 30 records: the 38 aborted ones are filtered out for ever. The default reader keeps receiving them. They stay in the log until retention removes the segment.</p>
+
+  <h3>Step 6. Look at the coordinator's topic</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --describe --topic __transaction_state | head -1</code></pre></div>
+  <pre class="out">Topic: __transaction_state  PartitionCount: 50  ReplicationFactor: 3
+Configs: compression.type=uncompressed,min.insync.replicas=2,cleanup.policy=compact,segment.bytes=104857600,…</pre>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Exactly-once means my code runs once for each record.</td><td>Your code can run several times. What happens once is the committed result in Kafka.</td></tr>
+        <tr><td>Turning on transactions in the producer is enough.</td><td>Consumers must set <code>read_committed</code>, or they receive aborted records.</td></tr>
+        <tr><td>Uncommitted records are kept in a buffer.</td><td>They are in the partition log at once. Markers and the reader's isolation level decide what is shown.</td></tr>
+        <tr><td>A Kafka transaction can include my database.</td><td>It covers only one Kafka cluster.</td></tr>
+        <tr><td>Any unique string works as a transactional id.</td><td>It must be the same after a restart. A random id each time gives no fencing, and old transactions wait for the timeout.</td></tr>
+        <tr><td>Transactions make Kafka slow.</td><td>The cost is per transaction, not per record. With batches of hundreds of records it is small.</td></tr>
+        <tr><td>Idempotence and transactions are the same thing.</td><td>Idempotence removes duplicates from retries to one partition. Transactions make writes to many partitions atomic and survive restarts.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>When are transactions the right tool, and when are they not?</summary><div class="answer">
+    <p>Right: a stream processing step that reads from Kafka and writes to Kafka, where a duplicate in the output is a real problem, such as money totals or counts that later steps trust.</p>
+    <p>Not needed: when consumers can ignore repeats cheaply by an id, or when occasional duplicates do no harm, such as metrics. Not sufficient: when the important effect is outside Kafka. There a transaction gives a false sense of safety.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you choose transactional ids for an application with ten instances?</summary><div class="answer">
+    <p>Each instance needs an id that no other live instance uses and that the same instance gets again after a restart. A stable instance number from the deployment system works: application name plus that number.</p>
+    <p>With a random id for each start, a crashed instance's open transaction is not aborted by its replacement, and blocks committed readers until the timeout. With a shared id, instances fence each other. Kafka Streams manages ids for you.</p>
+  </div></details>
+
+  <details class="qa"><summary>A team reports that their read_committed consumer is stuck but the topic is growing. What do you check?</summary><div class="answer">
+    <p>An open transaction on that partition. Compare the consumer's position with the partition's last stable offset. List transactions and look for one in state <code>Ongoing</code> for longer than expected; the describe output shows its producer, its start time and its timeout.</p>
+    <p>If the producer is gone, the coordinator aborts it at the timeout. If the timeout is very long, <code>kafka-transactions.sh</code> has an abort command for an operator to end it. Then fix the cause: a timeout set too high, or instances that restart with new ids.</p>
+  </div></details>
+
+  <details class="qa"><summary>How does the commit interval trade throughput against latency?</summary><div class="answer">
+    <p>Committed readers see nothing until the commit. So the commit interval is added to the end-to-end delay. A commit every 100 milliseconds keeps delay low and spends more on coordinator requests and markers. A commit every 5 seconds is cheap and makes every reader up to 5 seconds late, and a failure repeats up to 5 seconds of work.</p>
+    <p>Choose from the delay the readers accept, then check that the transaction rate is acceptable for the coordinator.</p>
+  </div></details>
+
+  <details class="qa"><summary>Why must offsets be committed through the producer in this pattern?</summary><div class="answer">
+    <p>The output records and the input offset must share one fate. If the consumer commits the offset separately, a crash between the two steps gives either repeated output or skipped input. <code>sendOffsetsToTransaction()</code> puts the offset commit under the same marker as the output.</p>
+    <p>The call also passes the consumer's group metadata, so that a consumer that was removed from the group in a rebalance cannot commit offsets for partitions it no longer owns.</p>
+  </div></details>
+
+  <details class="qa"><summary>What does exactly-once cost the cluster?</summary><div class="answer">
+    <p>Extra load on the coordinators and on <code>__transaction_state</code>. One marker write for each partition in each transaction. Memory in each partition leader for producer state. And an operational risk: any open transaction delays every committed reader of that partition, so one misbehaving client can affect others.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+
+  <details class="qa"><summary>1. What can one Kafka transaction contain?</summary><div class="answer"><p>Records for any topics and partitions in one cluster, and consumer group offset commits.</p></div></details>
+  <details class="qa"><summary>2. What is a marker?</summary><div class="answer"><p>A control record that the coordinator writes to each partition of a transaction to say commit or abort. It uses one offset.</p></div></details>
+  <details class="qa"><summary>3. What is the default isolation level of a consumer?</summary><div class="answer"><p><code>read_uncommitted</code>.</p></div></details>
+  <details class="qa"><summary>4. What is the last stable offset?</summary><div class="answer"><p>The offset of the first record of the oldest open transaction in the partition. Committed readers read only below it.</p></div></details>
+  <details class="qa"><summary>5. What does <code>initTransactions()</code> do to an older process with the same transactional id?</summary><div class="answer"><p>It raises the epoch, so the older process is fenced, and it finishes any transaction that process left open.</p></div></details>
+  <details class="qa"><summary>6. A producer crashes with a transaction open. What ends the transaction?</summary><div class="answer"><p>The coordinator aborts it after <code>transaction.timeout.ms</code>, or a restarted producer with the same id aborts it in <code>initTransactions()</code>.</p></div></details>
+  <details class="qa"><summary>7. Which step of a commit decides the outcome?</summary><div class="answer"><p>The coordinator writing "prepare commit" to its own log. Everything after it can be repeated.</p></div></details>
+  <details class="qa"><summary>8. A topic has 30 records and its end offset is 33. Why?</summary><div class="answer"><p>Three transactions were committed, and each commit marker uses one offset.</p></div></details>
+  <details class="qa"><summary>9. Name one effect that a Kafka transaction cannot make exactly-once.</summary><div class="answer"><p>Anything outside Kafka: a database write, an email, a call to another service.</p></div></details>
+  <details class="qa"><summary>10. Which tool shows open transactions?</summary><div class="answer"><p><code>kafka-transactions.sh</code>, with <code>list</code> and <code>describe</code>.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="05-kraft.html">← 05 KRaft</a>
+    <a class="btn primary" href="07-kafka-streams.html">07 Kafka Streams →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- transaction demo ----------
+(function () {
+  const logEl = document.getElementById('tx-log'), ru = document.getElementById('tx-ru'), rc = document.getElementById('tx-rc');
+  const out = document.getElementById('tx-out');
+  let log, open, crashed, n, note;
+
+  function reset() { log = []; open = false; crashed = false; n = 1; note = 'Nothing written yet. Press "Write a record": the first write begins a transaction.'; draw(); }
+  function cell(text, cls) { const c = document.createElement('div'); c.className = 'cell small ' + cls; c.textContent = text; c.style.animation = 'none'; return c; }
+
+  function draw() {
+    logEl.innerHTML = ''; ru.innerHTML = ''; rc.innerHTML = '';
+    const firstOpen = log.findIndex((r) => r.kind === 'data' && r.state === 'open');
+    log.forEach((r, i) => {
+      if (r.kind === 'marker') { logEl.appendChild(cell(r.text, 'marker')); return; }
+      const cls = r.state === 'open' ? 'new' : r.state === 'committed' ? 'safe' : 'aborted';
+      logEl.appendChild(cell(r.text, cls));
+      ru.appendChild(cell(r.text, cls === 'aborted' ? 'aborted' : cls));
+      if (r.state === 'committed' && (firstOpen === -1 || i < firstOpen)) rc.appendChild(cell(r.text, 'safe'));
+    });
+    const lso = firstOpen === -1 ? log.length : firstOpen;
+    out.innerHTML = note + '\nEnd offset: <b>' + log.length + '</b>   Last stable offset: <b>' + lso + '</b>'
+      + (firstOpen !== -1 ? '\n<span class="warn">read_committed is waiting at offset ' + lso + '.</span>' : '');
+  }
+  function end(kind) {
+    if (!open) { note = 'No transaction is open.'; draw(); return; }
+    log.forEach((r) => { if (r.kind === 'data' && r.state === 'open') r.state = kind === 'C' ? 'committed' : 'aborted'; });
+    log.push({ kind: 'marker', text: kind });
+    open = false;
+  }
+  document.getElementById('tx-send').addEventListener('click', () => {
+    if (crashed) { note = 'The producer is gone and its transaction is still open. Press "Abort" to act as the coordinator after the timeout, or start again.'; draw(); return; }
+    log.push({ kind: 'data', text: 'r' + n++, state: 'open' });
+    note = open ? 'Another record in the same transaction.' : 'A transaction began. The record is in the log already.';
+    open = true; draw();
+  });
+  document.getElementById('tx-commit').addEventListener('click', () => {
+    if (crashed) { note = 'A dead producer cannot commit.'; draw(); return; }
+    if (open) { end('C'); note = 'Committed. The coordinator wrote a commit marker. It uses one offset.'; }
+    else note = 'No transaction is open.';
+    draw();
+  });
+  document.getElementById('tx-abort').addEventListener('click', () => {
+    if (open) { end('A'); note = (crashed ? 'The timeout passed and the coordinator aborted the transaction.' : 'Aborted.') + ' The records stay in the log, but committed readers never see them.'; crashed = false; }
+    else note = 'No transaction is open.';
+    draw();
+  });
+  document.getElementById('tx-crash').addEventListener('click', () => {
+    if (!open) { note = 'Write a record first, so that a transaction is open when the producer crashes.'; draw(); return; }
+    crashed = true;
+    note = 'The producer crashed. Its transaction stays open until transaction.timeout.ms passes. Press "Abort" to let that time pass.';
+    draw();
+  });
+  document.getElementById('tx-reset').addEventListener('click', reset);
+  reset();
+})();
+
+// ---------- read-process-write demo ----------
+(function () {
+  const inEl = document.getElementById('rw-in'), outEl = document.getElementById('rw-out'), msg = document.getElementById('rw-msg');
+  const modes = [...document.querySelectorAll('[data-rw]')];
+  let mode = 'txn', timers = [];
+  function cell(el, text, cls) { const c = document.createElement('div'); c.className = 'cell small ' + cls; c.textContent = text; el.appendChild(c); }
+  function at(step, fn) { timers.push(setTimeout(fn, KB.reducedMotion ? 0 : step * 1200)); }
+  function run() {
+    timers.forEach(clearTimeout); timers = []; inEl.innerHTML = ''; outEl.innerHTML = '';
+    const lines = []; const say = (t) => { lines.push(t); msg.innerHTML = lines.join('\n'); };
+    msg.textContent = '';
+    ['a', 'b', 'c'].forEach((x) => cell(inEl, x, ''));
+    if (mode === 'plain') {
+      at(0, () => say('1. The application reads a, b, c. The committed input offset is 0.'));
+      at(1, () => { ['A', 'B', 'C'].forEach((x) => cell(outEl, x, 'safe')); say('2. It writes results A, B, C to the output topic.'); });
+      at(2, () => say('3. <span class="warn">Crash</span>, before the input offset is committed.'));
+      at(3, () => { ['A', 'B', 'C'].forEach((x) => cell(outEl, x, 'new')); say('4. After the restart it reads a, b, c again and writes A, B, C again.\n<span class="warn">Result: every output record exists twice.</span>'); });
+    } else {
+      at(0, () => say('1. The application reads a, b, c and begins a transaction.'));
+      at(1, () => say('2. It writes A, B, C and the new input offset, 3, inside the transaction. Committed readers see nothing yet.'));
+      at(2, () => say('3. <span class="warn">Crash</span>, before the commit.'));
+      at(3, () => say('4. After the restart, initTransactions() aborts the old transaction. The first A, B, C and the offset 3 are discarded together. The input offset is still 0.'));
+      at(4, () => { ['A', 'B', 'C'].forEach((x) => cell(outEl, x, 'safe')); say('5. It reads a, b, c again, writes A, B, C and offset 3, and commits.\n<b>Result: each output record exists once.</b> The code ran twice; the effect happened once.'); });
+    }
+  }
+  modes.forEach((b) => b.addEventListener('click', () => { mode = b.dataset.rw; modes.forEach((x) => x.setAttribute('aria-pressed', String(x === b))); }));
+  document.getElementById('rw-run').addEventListener('click', run);
+})();
+</script>
+<script src="extras/06.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

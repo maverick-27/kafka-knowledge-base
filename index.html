@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ knowledge base</span></a>
+    <div class="topbar-actions">
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Apache Kafka 4.3 · KRaft mode · 10 modules in 7 days · 4 depth labs</div>
+  <h1>Kafka, from the log up</h1>
+  <p class="lede">Ten modules that go from "what is a topic" to the design decisions a staff engineer makes. Each one has the theory, the configs, the failures, a lab that was run on a real three-broker cluster, and 175 activities in all: animations to watch, incidents to handle, settings to tune, numbers to work out and designs to defend.</p>
+  <p class="eyebrow" id="overall" style="margin-top:1rem"></p>
+
+  <div class="tape" data-tape>
+    <div class="tape-window"><div class="tape-track" aria-hidden="true"></div></div>
+    <div class="tape-caption">
+      <p>This is the whole idea: a list that only grows at the end. Records written: <strong data-tape-count>0</strong></p>
+      <button class="btn" type="button" data-tape-toggle>Pause</button>
+    </div>
+  </div>
+</div>
+
+<div class="wide">
+  <h2>Seven-day reading order</h2>
+  <p>Plan 6 to 8 hours each day. Read a section, then do its activities before you read on. Do the lab on the real cluster, and finish with the boss round. Your progress is kept in this browser.</p>
+
+  <div class="days">
+    <div class="day">
+      <div class="when">Day 1</div>
+      <h3>01 The log</h3>
+      <p>Topics, partitions, offsets, segments, indexes, retention, compaction.</p>
+      <div class="state"><a class="open" href="modules/01-the-log.html">Open module 01 →</a></div>
+      <div class="score" data-mod="01" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 2</div>
+      <h3>02 Producers</h3>
+      <p>Partitioner, batching, compression, acknowledgements, idempotence, retries, ordering.</p>
+      <div class="state"><a class="open" href="modules/02-producers.html">Open module 02 →</a></div>
+      <div class="score" data-mod="02" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 3</div>
+      <h3>03 Consumers</h3>
+      <p>Groups, both rebalance protocols, offset commits, lag, delivery guarantees.</p>
+      <div class="state"><a class="open" href="modules/03-consumers.html">Open module 03 →</a></div>
+      <div class="score" data-mod="03" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 4</div>
+      <h3>04 Replication</h3>
+      <p>Leaders and followers, in-sync replicas, high watermark, leader epoch, unclean election.</p>
+      <div class="state"><a class="open" href="modules/04-replication.html">Open module 04 →</a></div>
+      <div class="score" data-mod="04" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 4</div>
+      <h3>05 KRaft and the controller</h3>
+      <p>The metadata log, the controller quorum, the life of a broker.</p>
+      <div class="state"><a class="open" href="modules/05-kraft.html">Open module 05 →</a></div>
+      <div class="score" data-mod="05" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 5</div>
+      <h3>06 Transactions and exactly-once</h3>
+      <p>The transactional producer, read-process-write, and where the guarantee stops.</p>
+      <div class="state"><a class="open" href="modules/06-transactions.html">Open module 06 →</a></div>
+      <div class="score" data-mod="06" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 5</div>
+      <h3>07 Kafka Streams</h3>
+      <p>Streams and tables, state stores, windows, joins, changelog topics.</p>
+      <div class="state"><a class="open" href="modules/07-kafka-streams.html">Open module 07 →</a></div>
+      <div class="score" data-mod="07" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 6</div>
+      <h3>08 Ecosystem</h3>
+      <p>Schema Registry, Kafka Connect, change data capture, the outbox pattern, dead-letter topics.</p>
+      <div class="state"><a class="open" href="modules/08-ecosystem.html">Open module 08 →</a></div>
+      <div class="score" data-mod="08" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 7</div>
+      <h3>09 Operations</h3>
+      <p>Sizing, partition count, key metrics, tiered storage, quotas, security, upgrades.</p>
+      <div class="state"><a class="open" href="modules/09-operations.html">Open module 09 →</a></div>
+      <div class="score" data-mod="09" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Day 7</div>
+      <h3>10 Multi-cluster and design</h3>
+      <p>MirrorMaker 2, multi-region, share groups, and when not to use Kafka.</p>
+      <div class="state"><a class="open" href="modules/10-multi-cluster.html">Open module 10 →</a></div>
+      <div class="score" data-mod="10" data-total="15">15 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Depth lab</div>
+      <h3>11 Security lab</h3>
+      <p>A locked cluster: TLS, user names and passwords, and permissions for each user, with every rejection tested.</p>
+      <div class="state"><a class="open" href="modules/11-security-lab.html">Open module 11 →</a></div>
+      <div class="score" data-mod="11" data-total="12">12 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Depth lab</div>
+      <h3>12 Monitoring lab</h3>
+      <p>Broker metrics by their real names, Prometheus with alert rules, and a fault to make the alerts fire.</p>
+      <div class="state"><a class="open" href="modules/12-monitoring-lab.html">Open module 12 →</a></div>
+      <div class="score" data-mod="12" data-total="13">13 activities · not started</div>
+      <div class="mastery" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="day">
+      <div class="when">Depth lab</div>
+      <h3>13 Change data capture and outbox</h3>
+      <p>Debezium and PostgreSQL: snapshot, insert, update, delete, an outbox with a rolled-back transaction, and a stopped connector.</p>
+      <div class="state"><a class="open" href="modules/13-cdc-outbox-lab.html">Open module 13 →</a></div>
+    </div>
+    <div class="day">
+      <div class="when">Depth lab</div>
+      <h3>14 Tiered storage</h3>
+      <p>A broker with a tiered storage plug-in: segments move to remote storage, old data is read back, then expires.</p>
+      <div class="state"><a class="open" href="modules/14-tiered-storage-lab.html">Open module 14 →</a></div>
+    </div>
+  </div>
+
+  <h2>The lab cluster</h2>
+  <p>Every lab uses the same three-broker cluster, defined in <code>docker-compose.yml</code> in this folder. It also starts a web console at <code>http://localhost:8085</code> and, for module 08, a schema registry at <code>http://localhost:8086</code>.</p>
+  <div class="code col" style="margin-left:0"><pre><code>cd ~/Desktop/kafka-knowledge-base
+docker compose up -d</code></pre></div>
+  <p>That starts six containers: three brokers, the web console, the schema registry, and a one-broker second cluster for module 10. To start only the three brokers, run <code>docker compose up -d kafka-1 kafka-2 kafka-3</code>. Do the labs in module order: later labs use topics that earlier labs create. To start again from nothing, run <code>docker compose down</code> and then <code>up</code> again.</p>
+
+  <h2>Practice and projects</h2>
+  <p>Reading is not enough for a staff interview. These four pages turn the modules into practice.</p>
+  <div class="days">
+    <div class="day">
+      <div class="when">Weekly</div>
+      <h3>Failure drills</h3>
+      <p>15 scripted incidents to run on the lab cluster, with a stopwatch and a write-up builder for your own stories.</p>
+      <div class="state"><a class="open" href="drills.html">Open the drills →</a></div>
+    </div>
+    <div class="day">
+      <div class="when">Daily</div>
+      <h3>Mock interview</h3>
+      <p>75 timed questions to answer aloud, with model answers, self-scoring and a 45-minute mock loop.</p>
+      <div class="state"><a class="open" href="interview.html">Start practising →</a></div>
+    </div>
+    <div class="day">
+      <div class="when">Weeks 4 to 8</div>
+      <h3>Capstone project</h3>
+      <p>Build one small system on the lab cluster, keep it running, and collect real stories from it.</p>
+      <div class="state"><a class="open" href="capstone.html">Open the project brief →</a></div>
+    </div>
+    <div class="day">
+      <div class="when">Start here</div>
+      <h3>Case studies</h3>
+      <p>Nine public Kafka cases, and seven laptop recipes for the experience and scale you do not have yet. No invented stories.</p>
+      <div class="state"><a class="open" href="case-studies.html">Open the case studies →</a></div>
+    </div>
+    <div class="day">
+      <div class="when">Weeks 1 to 8</div>
+      <h3>Projects board</h3>
+      <p>Five projects with milestones and acceptance tests: the capstone, a scale lab, incident replay, a lag monitor and a failover rehearsal.</p>
+      <div class="state"><a class="open" href="projects.html">Open the projects →</a></div>
+    </div>
+    <div class="day">
+      <div class="when">Weeks 3 to 5</div>
+      <h3>Reading guide</h3>
+      <p>The design proposals behind the main features, checked against the Apache pages, with what to take from each.</p>
+      <div class="state"><a class="open" href="reading-guide.html">Open the guide →</a></div>
+    </div>
+  </div>
+
+  <h2>Reference pages</h2>
+  <div class="days">
+    <div class="day">
+      <div class="when">Look up</div>
+      <h3>Glossary</h3>
+      <p>77 terms, each with the module that explains it. You can filter by typing.</p>
+      <div class="state"><a class="open" href="glossary.html">Open the glossary →</a></div>
+    </div>
+    <div class="day">
+      <div class="when">Keep open</div>
+      <h3>Cheat sheet</h3>
+      <p>The commands from every lab, the settings to start from, and the default numbers worth remembering.</p>
+      <div class="state"><a class="open" href="cheat-sheet.html">Open the cheat sheet →</a></div>
+    </div>
+    <div class="day">
+      <div class="when">Check before you rely on it</div>
+      <h3>Unverified claims</h3>
+      <p>The 87 statements I could not confirm against the Kafka 4.3 documentation or a lab cluster.</p>
+      <div class="state"><a class="open" href="unverified.html">Open the list →</a></div>
+    </div>
+  </div>
+</div>
+
+</main>
+<script src="assets/kb.js"></script>
+<script>
+// Progress for each module, read from this browser's storage.
+(function () {
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem('kb-play') || '{}') || {}; } catch (e) { state = {}; }
+  var done = 0, all = 0;
+  document.querySelectorAll('.score[data-mod]').forEach(function (el) {
+    var total = Number(el.dataset.total), m = state[el.dataset.mod] || {}, n = 0;
+    Object.keys(m).forEach(function (k) { if (k !== '_total') n++; });
+    n = Math.min(n, total); done += n; all += total;
+    el.textContent = n === 0 ? total + ' activities · not started' : n === total ? 'All ' + total + ' activities committed · lag 0' : n + ' of ' + total + ' activities committed · lag ' + (total - n);
+    var bar = el.nextElementSibling && el.nextElementSibling.querySelector('i');
+    if (bar) bar.style.width = Math.round((n / total) * 100) + '%';
+  });
+  var o = document.getElementById('overall');
+  if (o) o.textContent = 'Your log: ' + done + ' of ' + all + ' activities committed';
+})();
+</script>
+</body>
+</html>

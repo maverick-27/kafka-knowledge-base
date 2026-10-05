@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01 The log · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 01 The log</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 01 · Day 1 · Kafka 4.3</div>
+  <h1>The log</h1>
+  <p class="lede">Everything in Kafka is built on one data structure: a file that only grows at the end. Learn this module well and the other nine become much easier.</p>
+
+  <div class="tape" data-tape>
+    <div class="tape-window"><div class="tape-track" aria-hidden="true"></div></div>
+    <div class="tape-caption">
+      <p>A partition. Each new record goes to the end and gets the next number, its <strong>offset</strong>. Nothing is edited in place. Records written so far: <strong data-tape-count>0</strong></p>
+      <button class="btn" type="button" data-tape-toggle>Pause</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>Kafka stores <strong>records</strong>. A record is one message: a key, a value, a timestamp, and optional headers. Records with the same purpose go into a <strong>topic</strong>, which is a named stream such as <code>orders</code>.</p>
+  <p>A topic is split into <strong>partitions</strong>. Each partition is a <strong>log</strong>: an ordered list of records that only grows at the end. Kafka gives every record in a partition a number, the <strong>offset</strong>. The first record is offset 0, the next is offset 1, and so on. An offset never changes and is never reused.</p>
+  <p>This design exists because it is simple and fast. Writing to the end of a file is the cheapest thing a disk can do. Reading is also cheap: a reader only needs to remember one number, the next offset it wants. Many readers can read the same data at different speeds, and a reader can go back and read old data again. The data stays until a <strong>retention</strong> rule removes it. Reading a record does not delete it.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> A topic is a set of append-only files; producers add to the end, consumers remember how far they have read, and the broker deletes old data by a time or size rule.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part" id="model" data-title="Mental model">
+  <div class="col">
+    <span class="offset-tag">offset 1</span>
+    <h2>Mental model</h2>
+    <p>Think of a topic as several notebooks, one for each partition. You can only write on the next empty line. Each line has a line number. Readers keep a bookmark. When a notebook is old enough, Kafka tears out whole pages from the front.</p>
+    <p>Three facts follow from this picture.</p>
+    <ul>
+      <li><strong>Order exists only inside one partition.</strong> There is no order between two partitions.</li>
+      <li><strong>The key decides the partition.</strong> Records with the same key go to the same partition, so they stay in order.</li>
+      <li><strong>Offsets belong to a partition.</strong> Offset 5 in partition 0 and offset 5 in partition 2 are different records.</li>
+    </ul>
+  </div>
+
+  <div class="lab-panel wide reveal" id="part-demo">
+    <h3>Try it: the key picks the partition</h3>
+    <p class="hint">Send records with different keys. The same key always lands in the same lane. This demo uses murmur2, the hash function of the Java client. I checked it against three values from Kafka's own tests.</p>
+    <div class="controls">
+      <label for="pd-key">Key</label>
+      <input id="pd-key" type="text" value="user-42" size="12" autocomplete="off">
+      <button class="btn primary" type="button" id="pd-send">Send record</button>
+      <button class="btn" type="button" data-key="user-17">user-17</button>
+      <button class="btn" type="button" data-key="user-42">user-42</button>
+      <button class="btn" type="button" data-key="user-1">user-1</button>
+      <button class="btn" type="button" data-key="">no key</button>
+      <button class="btn" type="button" id="pd-reset">Clear</button>
+    </div>
+    <div id="pd-lanes"></div>
+    <div class="readout" id="pd-out" aria-live="polite">Press "Send record".</div>
+    <p class="figcap">A record with no key has no hash. The producer then fills one batch for one partition and moves to another partition for the next batch. Module 02 covers this "sticky" behaviour.</p>
+  </div>
+
+  <div class="col">
+    <h3>What a partition looks like on disk</h3>
+    <p>A broker is one Kafka server. On a broker, each partition is a directory. The directory name is the topic name, a dash, and the partition number. Inside, the log is cut into files called <strong>segments</strong>. Only the newest segment, the <strong>active segment</strong>, receives writes.</p>
+  </div>
+
+  <figure class="figure wide reveal">
+<pre class="filetree">/tmp/kraft-combined-logs/                <span class="f-note">← log.dirs: where this broker keeps data</span>
+└── orders-0/                            <span class="f-note">← topic "orders", partition 0</span>
+    ├── <span class="f-log">00000000000000000000.log</span>         <span class="f-note">← segment 1: records with offsets 0 … 999</span>
+    ├── <span class="f-idx">00000000000000000000.index</span>       <span class="f-note">← offset → byte position in the .log file</span>
+    ├── <span class="f-idx">00000000000000000000.timeindex</span>   <span class="f-note">← timestamp → offset</span>
+    ├── <span class="f-log">00000000000000001000.log</span>         <span class="f-note">← segment 2: offsets 1000 … 1999</span>
+    ├── <span class="f-idx">00000000000000001000.index</span>
+    ├── <span class="f-idx">00000000000000001000.timeindex</span>
+    ├── <span class="f-log">00000000000000002000.log</span>         <span class="f-note">← active segment: the only file being written</span>
+    ├── <span class="f-idx">00000000000000002000.index</span>
+    ├── <span class="f-idx">00000000000000002000.timeindex</span>
+    ├── 00000000000000002000.snapshot    <span class="f-note">← producer state saved at the roll (module 02)</span>
+    ├── leader-epoch-checkpoint          <span class="f-note">← used by replication (module 04)</span>
+    └── partition.metadata               <span class="f-note">← the topic's unique id</span></pre>
+    <figcaption>The file name is the <strong>base offset</strong>: the offset of the first record in that segment, written with 20 digits. The offsets 1000 and 2000 are examples; real segments roll by size or age, not by record count.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part" id="internals" data-title="How it works">
+  <div class="col">
+    <span class="offset-tag">offset 2</span>
+    <h2>How it works internally</h2>
+
+    <h3>A write</h3>
+    <ol class="steps">
+      <li class="on">The producer groups records into a <strong>record batch</strong> and sends the batch to the broker that leads the partition.</li>
+      <li class="on">The broker checks the batch (size, checksum) and gives it the next offsets.</li>
+      <li class="on">The broker appends the batch to the end of the active segment. The bytes go to the operating system's memory first (the <strong>page cache</strong>). The operating system writes them to disk later.</li>
+      <li class="on">Each time about 4 KiB of data has been added (<code>index.interval.bytes</code>), the broker adds one entry to the <code>.index</code> file and one to the <code>.timeindex</code> file.</li>
+      <li class="on">When the active segment is full or old enough, the broker closes it and starts a new one. This is a <strong>roll</strong>.</li>
+    </ol>
+    <p>Kafka does not force each write to disk by default. The defaults for <code>flush.messages</code> and <code>flush.ms</code> are the largest possible number, which means "let the operating system decide". Kafka gets its safety from copies on other brokers, which is module 04.</p>
+
+    <h3>Why it is fast</h3>
+    <ul>
+      <li><strong>Sequential writes.</strong> The disk head, or the solid-state drive controller, never jumps around.</li>
+      <li><strong>Page cache.</strong> Recent data is served from memory without Kafka managing its own cache.</li>
+      <li><strong>Batches.</strong> One network request and one disk write carry many records. A batch is stored exactly as the producer sent it, including its compression.</li>
+      <li><strong>Zero-copy.</strong> For connections without encryption, the operating system sends file bytes straight to the network socket. The bytes do not pass through the Kafka process.</li>
+    </ul>
+
+    <h3>A read: how the broker finds an offset</h3>
+    <p>A consumer asks for "partition 0, from offset 1740". The broker must find the byte position of that record without reading the whole log. It does this in three steps. Run the demo to see each one.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="find-demo">
+    <h3>Try it: find a record by offset</h3>
+    <div class="controls">
+      <label for="fd-offset">Offset to find (0 to 2599)</label>
+      <input id="fd-offset" type="number" min="0" max="2599" value="1740">
+      <button class="btn primary" type="button" id="fd-run">Find</button>
+    </div>
+    <ol class="steps" id="fd-steps">
+      <li><strong>Pick the segment.</strong> <span data-s="0">Choose the segment with the largest base offset that is not greater than the target.</span></li>
+      <li><strong>Search the index.</strong> <span data-s="1">The <code>.index</code> file is sparse: it has an entry for only some offsets. Binary search finds the nearest entry at or before the target.</span></li>
+      <li><strong>Scan the log file.</strong> <span data-s="2">Start at that byte position and read forward until the target offset.</span></li>
+    </ol>
+    <div class="lane"><div class="lane-name">segments</div><div class="lane-cells" id="fd-segs"></div></div>
+    <div class="lane"><div class="lane-name">.index entries</div><div class="lane-cells" id="fd-idx"></div></div>
+    <div class="readout" id="fd-out" aria-live="polite">Press "Find".</div>
+    <p class="figcap">The index entries in this demo are 125 offsets apart to keep the picture readable. In a real segment the gap depends on record size, because the broker adds an entry about every 4 KiB of data.</p>
+  </div>
+
+  <div class="col">
+    <p>The <code>.timeindex</code> file works the same way for time. It answers "what is the first offset at or after 14:00 yesterday?", which is how a consumer rewinds to a point in time.</p>
+
+    <h3>The offsets you must know</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Log start offset</td><td>The oldest offset that still exists. It moves forward when retention deletes a segment.</td></tr>
+          <tr><td>Log end offset</td><td>The offset the <em>next</em> record will get. It is one more than the newest record.</td></tr>
+          <tr><td>High watermark</td><td>The newest offset that is safely copied to enough brokers. Consumers can read only up to here. Module 04 explains it.</td></tr>
+          <tr><td>Committed offset</td><td>A consumer group's saved bookmark: the next offset it will read after a restart. Module 03 explains it.</td></tr>
+          <tr><td>Lag</td><td>Log end offset minus committed offset. It is the number of records the consumer has not processed yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Retention: deleting old data</h3>
+    <p>With <code>cleanup.policy=delete</code>, the default, a background task checks each partition every 5 minutes (<code>log.retention.check.interval.ms</code>). It removes segments that break a rule:</p>
+    <ul>
+      <li><strong>Time:</strong> the newest record in the segment is older than <code>retention.ms</code> (default 7 days).</li>
+      <li><strong>Size:</strong> the partition is larger than <code>retention.bytes</code> (default −1, which means no limit). The oldest segments go first.</li>
+    </ul>
+    <p>The important detail: Kafka deletes <strong>whole segments</strong>, never part of one. A record stays until every record in its segment has expired. So data usually lives longer than <code>retention.ms</code>. Move the slider to see how much longer.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="ret-demo">
+    <h3>Try it: retention works on whole segments</h3>
+    <p class="hint">Retention is 3 days. Records arrive at a steady rate. Change how often segments roll and watch the age of the oldest record that is still on disk.</p>
+    <div class="controls">
+      <label for="rd-seg">A segment rolls every</label>
+      <select id="rd-seg">
+        <option value="1">1 day</option>
+        <option value="3">3 days</option>
+        <option value="7" selected>7 days (the default)</option>
+      </select>
+    </div>
+    <div class="controls">
+      <label for="rd-time">Now: day <span id="rd-now">12</span></label>
+      <input id="rd-time" type="range" min="0" max="21" step="0.5" value="12">
+    </div>
+    <div class="lane"><div class="lane-name">segments</div><div class="lane-cells" id="rd-segs"></div></div>
+    <div class="legend">
+      <span><i style="background:var(--write)"></i>active segment</span>
+      <span><i style="background:var(--surface-2)"></i>closed, still on disk</span>
+      <span><i style="background:var(--gone-soft);border-color:var(--gone)"></i>deleted</span>
+    </div>
+    <div class="readout" id="rd-out" aria-live="polite"></div>
+  </div>
+
+  <div class="col">
+    <p>When a segment is deleted, the broker first renames its files with a <code>.deleted</code> ending and removes them one minute later (<code>file.delete.delay.ms</code>). The log start offset moves forward at once.</p>
+    <p class="note">The active segment is not exempt. If every record in it has expired, the broker starts a new segment and deletes the old one. Step 7 of the lab shows this on the real cluster. An active segment survives only because new records keep arriving in it.</p>
+
+    <h3>Compaction: keeping the latest value for each key</h3>
+    <p>Some topics hold state, not events. An example is "the current address of each user". For these, age is the wrong rule. You want to keep the newest record for each key for ever and drop the older ones. This is <code>cleanup.policy=compact</code>.</p>
+    <p>A background thread, the <strong>log cleaner</strong>, does the work:</p>
+    <ol>
+      <li>It looks only at closed segments. It never touches the active segment.</li>
+      <li>It reads the part not yet cleaned and builds a map: key → newest offset.</li>
+      <li>It copies the segments into new files and leaves out every record that has a newer record with the same key.</li>
+      <li>It swaps the new files in. The offsets of the remaining records do not change, so the log now has gaps.</li>
+    </ol>
+    <p>A record with a key and a <strong>null value</strong> is a <strong>tombstone</strong>. It means "delete this key". The cleaner keeps a tombstone for <code>delete.retention.ms</code> (default 1 day) so that consumers have time to see it, and then removes it too.</p>
+  </div>
+
+  <div class="lab-panel wide reveal" id="cmp-demo">
+    <h3>Try it: run the log cleaner</h3>
+    <p class="hint">Each cell is <code>offset key=value</code>. The value ∅ is a tombstone.</p>
+    <div class="lane"><div class="lane-name">closed segments</div><div class="lane-cells" id="cd-closed"></div></div>
+    <div class="lane"><div class="lane-name">active segment</div><div class="lane-cells" id="cd-active"></div></div>
+    <div class="controls">
+      <button class="btn primary" type="button" id="cd-step">Run the cleaner</button>
+      <button class="btn" type="button" id="cd-reset">Start again</button>
+    </div>
+    <div class="readout" id="cd-out" aria-live="polite">Six records in closed segments, two in the active segment.</div>
+  </div>
+
+  <div class="col">
+    <p>A topic can use both rules: <code>cleanup.policy=compact,delete</code>. Kafka then keeps the latest value for each key, and also drops anything older than the retention time.</p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>These are topic settings. Each has a broker setting that supplies the default for topics that do not set their own. I checked every default below against the Kafka 4.3 documentation, except where marked.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Topic config</th><th>Default</th><th>What it does</th><th>When to change it</th></tr></thead>
+      <tbody>
+        <tr><td><code>cleanup.policy</code></td><td><code>delete</code></td><td>Chooses the rule for old data: <code>delete</code>, <code>compact</code>, or both.</td><td>Use <code>compact</code> for topics that hold the latest state for each key.</td></tr>
+        <tr><td><code>retention.ms</code></td><td>604800000 (7 days)</td><td>A closed segment can be deleted when its newest record is older than this. −1 means keep for ever.</td><td>Lower it to save disk. Raise it when consumers must be able to replay further back.</td></tr>
+        <tr><td><code>retention.bytes</code></td><td>−1 (no limit)</td><td>Maximum size of <em>one partition</em> before the oldest segments are deleted.</td><td>Set it when disk space, not time, is the hard limit. Multiply by the partition count to get the topic total.</td></tr>
+        <tr><td><code>segment.bytes</code></td><td>1073741824 (1 GiB)</td><td>The active segment rolls when it reaches this size.</td><td>Lower it for small topics so that retention and compaction can act sooner.</td></tr>
+        <tr><td><code>segment.ms</code></td><td>604800000 (7 days)</td><td>The active segment rolls when it is this old, even if it is not full.</td><td>Lower it on low-volume topics. This is the usual fix when data outlives retention or compaction never runs.</td></tr>
+        <tr><td><code>segment.jitter.ms</code></td><td>0</td><td>Adds a random delay to time-based rolls.</td><td>Raise it when many partitions would roll at the same moment and cause a burst of disk work.</td></tr>
+        <tr><td><code>segment.index.bytes</code></td><td>10485760 (10 MiB)</td><td>Maximum size of the offset index file. A full index also forces a roll.</td><td>Rarely.</td></tr>
+        <tr><td><code>index.interval.bytes</code></td><td>4096 (4 KiB)</td><td>How much data is written between two index entries.</td><td>Rarely. A smaller value gives a larger index and a shorter scan.</td></tr>
+        <tr><td><code>min.cleanable.dirty.ratio</code></td><td>0.5</td><td>Compaction starts when at least this share of the log is not yet cleaned.</td><td>Lower it to compact sooner, at the cost of more disk work.</td></tr>
+        <tr><td><code>delete.retention.ms</code></td><td>86400000 (1 day)</td><td>How long a tombstone stays after cleaning.</td><td>Raise it if a consumer can be offline for more than a day and must still see deletes.</td></tr>
+        <tr><td><code>min.compaction.lag.ms</code></td><td>0</td><td>A record cannot be compacted until it is at least this old.</td><td>Raise it when consumers need to see every change for some time.</td></tr>
+        <tr><td><code>max.compaction.lag.ms</code></td><td>9223372036854775807</td><td>A record becomes eligible for compaction after this time, whatever the dirty ratio.</td><td>Set it when a rule says old values must be removed within a fixed time.</td></tr>
+        <tr><td><code>file.delete.delay.ms</code></td><td>60000 (1 minute)</td><td>Wait between marking a file deleted and removing it.</td><td>Rarely.</td></tr>
+        <tr><td><code>max.message.bytes</code></td><td>1048588</td><td>Largest record batch the topic accepts, measured after compression.</td><td>Raise it for large records, and raise the matching producer and consumer limits too.</td></tr>
+        <tr><td><code>message.timestamp.type</code></td><td><code>CreateTime</code></td><td>Whether the record time is set by the producer (<code>CreateTime</code>) or by the broker (<code>LogAppendTime</code>).</td><td>Use <code>LogAppendTime</code> when you cannot trust producer clocks.</td></tr>
+        <tr><td><code>flush.messages</code>, <code>flush.ms</code></td><td>9223372036854775807</td><td>Force a write to disk after this many records or this much time.</td><td>Almost never. Use replication for safety.</td></tr>
+        <tr><td><code>remote.storage.enable</code>, <code>local.retention.ms</code></td><td><code>false</code>, −2</td><td>Tiered storage: move old segments to cheaper remote storage.</td><td>Module 09.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h3>Broker settings for this module</h3>
+  </div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Broker config</th><th>Default</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>log.dirs</code></td><td>none; falls back to <code>log.dir</code></td><td>Directories where the broker stores partitions. The lab cluster sets <code>/tmp/kraft-combined-logs</code>.</td></tr>
+        <tr><td><code>log.retention.hours</code></td><td>168</td><td>Broker default for retention, in hours. <code>log.retention.ms</code> overrides it when set.</td></tr>
+        <tr><td><code>log.retention.check.interval.ms</code></td><td>300000 (5 minutes)</td><td>How often the broker checks for segments to delete.</td></tr>
+        <tr><td><code>log.roll.hours</code></td><td>168</td><td>Broker default for the time-based roll.</td></tr>
+        <tr><td><code>log.cleaner.threads</code></td><td>1</td><td>Number of compaction threads.</td></tr>
+        <tr><td><code>auto.create.topics.enable</code></td><td><code>true</code></td><td>Creates a topic when a client first uses an unknown name. Turn it off in production.</td></tr>
+        <tr><td><code>num.partitions</code></td><td>1</td><td>Partition count for topics created automatically.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>Data stays long after the retention time</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A topic that gets a few records each hour has <code>retention.ms</code> of 1 day, but still holds records that are a week old.</dd>
+      <dt>You observe</dt><dd>One large segment file. The log start offset does not move.</dd>
+      <dt>Cause</dt><dd>The segment rolls only every 7 days or 1 GiB, and retention acts on whole closed segments.</dd>
+      <dt>Fix</dt><dd>Set <code>segment.ms</code> to a value near the retention time, for example 1 hour to 1 day.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The broker disk fills</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The broker stops when a data directory has no free space.</dd>
+      <dt>You observe</dt><dd>Disk use grows steadily; errors about failed log directories in the broker log.</dd>
+      <dt>Cause</dt><dd>Retention is by time only, and traffic grew. <code>retention.bytes</code> is unlimited by default.</dd>
+      <dt>Fix</dt><dd>Set <code>retention.bytes</code> as a safety limit and alert on disk use. Size the disk for peak traffic multiplied by retention time and by the number of copies.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A consumer falls behind retention</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A consumer was offline for longer than the retention time. Its saved offset now points to deleted data.</dd>
+      <dt>You observe</dt><dd>An "offset out of range" error. The consumer then jumps according to <code>auto.offset.reset</code>: to the newest data (records are skipped silently) or to the oldest (many records are processed again).</dd>
+      <dt>Fix</dt><dd>Alert when lag, measured in time, comes near the retention time. Choose <code>auto.offset.reset</code> on purpose for each consumer.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A compacted topic never shrinks</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Old values for a key stay for ever; a new consumer reads millions of outdated records.</dd>
+      <dt>You observe</dt><dd>The topic grows. A read from the start shows many records for one key.</dd>
+      <dt>Cause</dt><dd>The data sits in the active segment, which the cleaner skips. Or the dirty ratio is not reached. Or the cleaner thread stopped after an error.</dd>
+      <dt>Fix</dt><dd>Lower <code>segment.ms</code>. Set <code>max.compaction.lag.ms</code>. Look in the broker's <code>log-cleaner.log</code> file for errors.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A record is too large</h3>
+    <dl>
+      <dt>What breaks</dt><dd>The producer gets a "record too large" error and the record is not written.</dd>
+      <dt>Cause</dt><dd>The batch is larger than <code>max.message.bytes</code>, about 1 MiB.</dd>
+      <dt>Fix</dt><dd>Prefer to store the large object elsewhere and send a reference. If you must raise the limit, raise it on the topic, the producer, and the consumers together.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Order is lost after adding partitions</h3>
+    <dl>
+      <dt>What breaks</dt><dd>Events for one customer arrive out of order.</dd>
+      <dt>Cause</dt><dd>The partition is the hash of the key divided by the partition count, taking the remainder. A new count sends the same key to a different partition. Old records stay where they were.</dd>
+      <dt>Fix</dt><dd>Choose the partition count with room to grow. If you must change it, create a new topic and migrate. You cannot reduce the partition count at all.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>A wrong clock blocks retention</h3>
+    <dl>
+      <dt>What breaks</dt><dd>A producer with a clock set in the future writes a record. Its segment does not look old until that future time has passed, so retention keeps it.</dd>
+      <dt>You observe</dt><dd>One old segment stays while newer segments are deleted.</dd>
+      <dt>Limit</dt><dd>Kafka 4.3 rejects a record whose time is more than 1 hour ahead of the broker (<code>message.timestamp.after.max.ms</code>, default 3600000). The problem returns if someone raises that limit.</dd>
+      <dt>Fix</dt><dd>Keep the default limit, or use <code>LogAppendTime</code> so that the broker sets the time.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 4 October 2026</strong> against this folder's cluster (image <code>apache/kafka:4.3.1</code>). The outputs are the real ones, shortened where marked. Broker numbers, ids and timestamps will differ on your run.</p>
+  </div>
+
+  <h3>Step 1. Start the cluster</h3>
+  <p>Run this in the knowledge base folder, where <code>docker-compose.yml</code> is.</p>
+  <div class="code"><pre><code>docker compose up -d
+docker compose ps</code></pre></div>
+  <p>You should see <code>kafka-1</code>, <code>kafka-2</code>, <code>kafka-3</code> and <code>kafka-ui</code> running. The web console is at <code>http://localhost:8085</code>. To type less, define a short name for running a Kafka tool inside the first broker:</p>
+  <div class="code"><pre><code>k() { docker exec -it kafka-1 /opt/kafka/bin/"$@"; }</code></pre></div>
+
+  <h3>Step 2. Create a topic and look at it</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server kafka-1:19092 \
+  --create --topic orders --partitions 3 --replication-factor 3
+
+k kafka-topics.sh --bootstrap-server kafka-1:19092 --describe --topic orders</code></pre></div>
+  <div class="out-label">Expected output</div>
+  <pre class="out">Topic: orders   TopicId: …   PartitionCount: 3   ReplicationFactor: 3   Configs: min.insync.replicas=2
+    Topic: orders   Partition: 0   Leader: 2   Replicas: 2,3,1   Isr: 2,3,1   Elr:   LastKnownElr:
+    Topic: orders   Partition: 1   Leader: 3   Replicas: 3,1,2   Isr: 3,1,2   Elr:   LastKnownElr:
+    Topic: orders   Partition: 2   Leader: 1   Replicas: 1,2,3   Isr: 1,2,3   Elr:   LastKnownElr:</pre>
+  <p><code>Leader</code>, <code>Replicas</code>, <code>Isr</code> and <code>Elr</code> describe the copies of each partition. Module 04 explains them.</p>
+
+  <h3>Step 3. Write records with keys</h3>
+  <p>Type each line and press Enter. The text before the colon is the key. Press Ctrl+D to finish.</p>
+  <div class="code"><pre><code>k kafka-console-producer.sh --bootstrap-server kafka-1:19092 --topic orders \
+  --reader-property parse.key=true --reader-property key.separator=:</code></pre></div>
+  <pre class="out">user-17:created
+user-42:created
+user-1:created
+user-42:paid
+user-42:shipped</pre>
+
+  <h3>Step 4. Read them back with partition and offset</h3>
+  <div class="code"><pre><code>k kafka-console-consumer.sh --bootstrap-server kafka-1:19092 --topic orders \
+  --from-beginning --formatter-property print.key=true \
+  --formatter-property print.partition=true --formatter-property print.offset=true</code></pre></div>
+  <div class="out-label">Output (the order between partitions can differ)</div>
+  <pre class="out">Partition:1   Offset:0   user-42   created
+Partition:1   Offset:1   user-42   paid
+Partition:1   Offset:2   user-42   shipped
+Partition:0   Offset:0   user-17   created
+Partition:2   Offset:0   user-1    created</pre>
+  <p>Check two things. All <code>user-42</code> records are in one partition and in the order you typed them. Each partition starts its own offsets at 0. The partitions match the demo above: I computed them with the same hash. Press Ctrl+C to stop the consumer.</p>
+  <p class="note">Many older guides use <code>--property</code> for both tools. Kafka 4.3 still accepts it but prints a warning: the producer now wants <code>--reader-property</code> and the consumer wants <code>--formatter-property</code>. The consumer also prints one line about the newer rebalance protocol, which module 03 covers.</p>
+
+  <h3>Step 5. Look at the files</h3>
+  <div class="code"><pre><code>docker exec kafka-1 ls -l /tmp/kraft-combined-logs/orders-1
+
+k kafka-dump-log.sh --print-data-log \
+  --files /tmp/kraft-combined-logs/orders-1/00000000000000000000.log</code></pre></div>
+  <div class="out-label">Output (shortened)</div>
+  <pre class="out">-rw-r--r-- 1 appuser appuser 10485760 … 00000000000000000000.index
+-rw-r--r-- 1 appuser appuser      121 … 00000000000000000000.log
+-rw-r--r-- 1 appuser appuser 10485756 … 00000000000000000000.timeindex
+-rw-r--r-- 1 appuser appuser        8 … leader-epoch-checkpoint
+-rw-r--r-- 1 appuser appuser       43 … partition.metadata
+
+baseOffset: 0 lastOffset: 2 count: 3 baseSequence: 0 lastSequence: 2 producerId: 0 … position: 0 CreateTime: 1791154194544 size: 121 magic: 2 compresscodec: none crc: 3354041928 isvalid: true
+| offset: 0 CreateTime: 1791154194543 keySize: 7 valueSize: 7 sequence: 0 headerKeys: [] key: user-42 payload: created
+| offset: 1 CreateTime: 1791154194543 keySize: 7 valueSize: 4 sequence: 1 headerKeys: [] key: user-42 payload: paid
+| offset: 2 CreateTime: 1791154194544 keySize: 7 valueSize: 7 sequence: 2 headerKeys: [] key: user-42 payload: shipped</pre>
+  <p>Each <code>baseOffset</code> line is one record batch. <code>position</code> is the byte position in the file, the value the index points to. Here the three <code>user-42</code> records arrived together, so they are one batch of 121 bytes. If you type slowly, you get three batches.</p>
+  <p>The index files look like 10 MiB each. The broker reserves the full <code>segment.index.bytes</code> for the active segment and cuts the file to its real size when the segment closes.</p>
+
+  <h3>Step 6. Make segments roll</h3>
+  <p>Create a topic with the smallest segment size that Kafka 4 allows, 1 MiB, and write about 4 MiB into it.</p>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server kafka-1:19092 --create --topic rolls \
+  --partitions 1 --replication-factor 3 --config segment.bytes=1048576
+
+k kafka-producer-perf-test.sh --topic rolls --num-records 20000 --record-size 200 \
+  --throughput -1 --command-property bootstrap.servers=kafka-1:19092
+
+docker exec kafka-1 ls /tmp/kraft-combined-logs/rolls-0</code></pre></div>
+  <div class="out-label">Output: five segments, named by base offset (index files left out)</div>
+  <pre class="out">20000 records sent, 31897.9 records/sec (6.08 MB/sec), 250.74 ms avg latency, 406.00 ms max latency …
+
+00000000000000000000.log
+00000000000000004992.log      00000000000000004992.snapshot
+00000000000000009984.log      00000000000000009984.snapshot
+00000000000000014976.log      00000000000000014976.snapshot
+00000000000000019968.log      00000000000000019968.snapshot</pre>
+  <p>Each segment holds 4,992 records, about 1 MiB. The <code>.snapshot</code> files save producer state at each roll; module 02 explains why. A smaller segment is not possible: <code>segment.bytes=1000</code> fails with "Value must be at least 1048576".</p>
+
+  <h3>Step 7. Watch retention delete whole segments</h3>
+  <div class="code"><pre><code>k kafka-configs.sh --bootstrap-server kafka-1:19092 --alter \
+  --entity-type topics --entity-name rolls --add-config retention.ms=60000
+
+# wait up to 6 minutes: 1 minute of retention plus the 5-minute check
+docker exec kafka-1 ls /tmp/kraft-combined-logs/rolls-0
+k kafka-get-offsets.sh --bootstrap-server kafka-1:19092 --topic rolls --time earliest</code></pre></div>
+  <div class="out-label">Output, about 4 minutes after the config change</div>
+  <pre class="out">00000000000000000000.log.deleted
+00000000000000004992.log.deleted
+…
+00000000000000019968.log.deleted
+00000000000000020000.log
+rolls:0:20000</pre>
+  <p>Whole files went, not single records. The earliest offset moved from 0 to 20000. The files carry the <code>.deleted</code> ending for one minute before they disappear.</p>
+  <p>Look at the last segment. The active segment, base offset 19968, had also expired. The broker started a new empty segment at offset 20000 and deleted the old one. So an active segment is protected only while it still receives records that are newer than the retention time.</p>
+
+  <h3>Step 8. Watch compaction</h3>
+  <div class="code"><pre><code>k kafka-topics.sh --bootstrap-server kafka-1:19092 --create --topic addresses \
+  --partitions 1 --replication-factor 3 \
+  --config cleanup.policy=compact --config segment.ms=10000 \
+  --config min.cleanable.dirty.ratio=0.01 --config delete.retention.ms=1000
+
+k kafka-console-producer.sh --bootstrap-server kafka-1:19092 --topic addresses \
+  --reader-property parse.key=true --reader-property key.separator=:</code></pre></div>
+  <pre class="out">user-1:Paris
+user-2:Rome
+user-1:Berlin
+user-3:Oslo
+user-3:Lima</pre>
+  <p>Wait 30 seconds. Then send one more record, <code>user-4:Cairo</code>, so that the first segment closes. Wait about one more minute and read from the start:</p>
+  <div class="code"><pre><code>k kafka-console-consumer.sh --bootstrap-server kafka-1:19092 --topic addresses \
+  --from-beginning --formatter-property print.key=true --formatter-property print.offset=true</code></pre></div>
+  <div class="out-label">Output: the offsets have gaps</div>
+  <pre class="out">Offset:1   user-2   Rome
+Offset:2   user-1   Berlin
+Offset:4   user-3   Lima
+Offset:5   user-4   Cairo</pre>
+  <p>If you still see all six records, wait longer. The cleaner checks for work every 15 seconds (<code>log.cleaner.backoff.ms</code>) and gives no exact time.</p>
+
+  <h3>Step 9. Stop the cluster</h3>
+  <div class="code"><pre><code>docker compose down      # keep the data
+docker compose down -v   # delete the data too</code></pre></div>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>A record is removed when a consumer reads it.</td><td>Reading changes nothing in the log. Only retention or compaction removes data.</td></tr>
+        <tr><td>A topic keeps records in order.</td><td>Only one partition does. A topic with several partitions has no total order.</td></tr>
+        <tr><td>Retention of 7 days means data is deleted at 7 days.</td><td>It is deleted some time after 7 days, when its whole segment has expired and the next check runs.</td></tr>
+        <tr><td>A compacted topic holds one record for each key.</td><td>It holds <em>at least</em> the latest record for each key. The active segment and the part not yet cleaned still hold older ones.</td></tr>
+        <tr><td>Offsets in a partition have no gaps.</td><td>Compaction leaves gaps, and so do transactions (module 06). Never compute a record count from two offsets and trust it exactly.</td></tr>
+        <tr><td>More partitions are always better.</td><td>Each partition costs files, memory, and recovery time. And you cannot reduce the count later.</td></tr>
+        <tr><td>A record without a key is fine on a compacted topic.</td><td>Compaction needs a key. The broker rejects records without one on a compacted topic.</td></tr>
+        <tr><td>Kafka writes every record to disk before it answers.</td><td>By default it writes to memory and lets the operating system write to disk. Copies on other brokers give the safety.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+  <p>Try to answer each one aloud before you open it.</p>
+
+  <details class="qa"><summary>How much disk does a topic need?</summary><div class="answer">
+    <p>Start with: write rate × retention time × number of copies. For 5 MB each second, 7 days, and 3 copies: 5 MB × 604,800 seconds × 3 ≈ 9 TB.</p>
+    <p>Then add what the simple formula misses. Add one segment for each partition, because retention overshoots by up to a segment. Add index files, a small percentage. Add free space, often 30 to 40 percent, so that a broker can take over partitions from a failed one. Use the compressed size if producers compress.</p>
+  </div></details>
+
+  <details class="qa"><summary>How do you choose the partition count?</summary><div class="answer">
+    <p>Find the number you need for throughput: target rate divided by what one partition handles on the slowest side, which is usually the consumer. Then find the number you need for parallel consumers, because one partition is read by at most one consumer in a group. Take the larger number and add room for growth, because changing the count later breaks key ordering.</p>
+    <p>Then check the cost: more files, more memory for indexes, slower recovery after a broker failure, and more small batches at the producer. A count in the tens is normal. A count in the thousands for one topic needs a reason.</p>
+  </div></details>
+
+  <details class="qa"><summary>A team wants "keep data for ever". What do you tell them?</summary><div class="answer">
+    <p>Ask what they will do with it. If they need the current state for each key, use compaction: size is bounded by the number of keys. If they need the full history, use <code>retention.ms=-1</code> with tiered storage so that old segments move to cheap storage (module 09).</p>
+    <p>Point out the costs: a new replica must copy everything, and a consumer that reads from the start takes a long time. Often a database or a data lake is the right home for history, with Kafka as the transport.</p>
+  </div></details>
+
+  <details class="qa"><summary>A privacy rule says a user's data must be gone in 30 days. Can a Kafka topic meet it?</summary><div class="answer">
+    <p>On a delete topic, set retention plus one segment period below 30 days, for example <code>retention.ms</code> of 25 days and <code>segment.ms</code> of 1 day.</p>
+    <p>On a compacted topic, write a tombstone for the user's key and set <code>max.compaction.lag.ms</code> so that the cleaner must act in time. The tombstone itself goes after <code>delete.retention.ms</code>. Remember the copies outside the topic: consumer databases, backups, and remote storage.</p>
+    <p>Another design avoids the problem: encrypt each user's data with a key for that user, and delete the key.</p>
+  </div></details>
+
+  <details class="qa"><summary>Why does Kafka trust the page cache, and when is that a risk?</summary><div class="answer">
+    <p>Forcing each write to disk would remove most of the speed. Kafka accepts that one broker can lose its newest data in a power failure, and protects the data by copying it to other brokers before it confirms the write.</p>
+    <p>The risk is a failure that hits all copies at once, such as one power source for all brokers. The answer is to spread brokers across racks or zones, not to force writes to disk.</p>
+  </div></details>
+
+  <details class="qa"><summary>What do small segments cost?</summary><div class="answer">
+    <p>Each segment is three open files and two memory-mapped indexes. Ten thousand partitions with one-hour segments and seven days of data is more than five million files. The broker can reach the operating system's limit for open files, and start-up and recovery become slow.</p>
+    <p>So small segments are right for a few low-volume or compacted topics, and wrong as a default for the whole cluster.</p>
+  </div></details>
+
+  <details class="qa"><summary>When is a log the wrong tool?</summary><div class="answer">
+    <p>When you need to find a record by something other than its offset, a database is better. When each message must be handled once by any free worker, with separate retries for each message, a queue fits better; Kafka's share groups (module 10) cover part of this. When messages are very large, store the object elsewhere. When the volume is small and you already have a database, a table may be enough.</p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+  <p>Ten questions. Answer first, then open.</p>
+
+  <details class="qa"><summary>1. What does an offset identify?</summary><div class="answer"><p>The position of one record in one partition. It is not unique across partitions or topics.</p></div></details>
+  <details class="qa"><summary>2. Two records have the same key. What does Kafka guarantee?</summary><div class="answer"><p>They go to the same partition, so consumers see them in the order they were written. This holds while the partition count stays the same.</p></div></details>
+  <details class="qa"><summary>3. What does the name <code>00000000000000001000.log</code> tell you?</summary><div class="answer"><p>The first record in this segment has offset 1000.</p></div></details>
+  <details class="qa"><summary>4. Name three things that make the active segment roll.</summary><div class="answer"><p>It reaches <code>segment.bytes</code>. It reaches the age <code>segment.ms</code>. Its index file is full.</p></div></details>
+  <details class="qa"><summary>5. How does the broker find offset 1740 quickly?</summary><div class="answer"><p>It picks the segment by base offset, binary-searches the sparse <code>.index</code> for the nearest earlier entry, and scans forward in the <code>.log</code> file from that byte position.</p></div></details>
+  <details class="qa"><summary>6. <code>retention.ms</code> is 1 day and <code>segment.ms</code> is 7 days on a quiet topic. About how old can a record get?</summary><div class="answer"><p>About 8 days. The segment closes at 7 days. Its newest record must then be 1 day old before the segment can go.</p></div></details>
+  <details class="qa"><summary>7. What is a tombstone and how long does it live?</summary><div class="answer"><p>A record with a key and a null value. It tells compaction to delete the key. It stays for <code>delete.retention.ms</code> after cleaning, 1 day by default.</p></div></details>
+  <details class="qa"><summary>8. Why can a compacted topic still hold two values for one key?</summary><div class="answer"><p>The cleaner skips the active segment and runs only when enough of the log is not yet cleaned. Until it runs, older values remain.</p></div></details>
+  <details class="qa"><summary>9. What is lag?</summary><div class="answer"><p>The log end offset minus the consumer group's committed offset: the records not yet processed.</p></div></details>
+  <details class="qa"><summary>10. You raise a topic from 3 to 6 partitions. What breaks?</summary><div class="answer"><p>Keys map to different partitions from now on. New records for a key can land in a different partition from its old records, so order for that key is no longer guaranteed across the change.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="../index.html">← All modules</a>
+    <a class="btn primary" href="02-producers.html">02 Producers →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+// ---------- partitioner demo ----------
+(function () {
+  const PARTS = 3;
+  const lanes = document.getElementById('pd-lanes');
+  const out = document.getElementById('pd-out');
+  const input = document.getElementById('pd-key');
+  let next = [0, 0, 0];
+  let sticky = 0, stickyLeft = 3;
+
+  // murmur2 exactly as in org.apache.kafka.common.utils.Utils
+  function murmur2(bytes) {
+    const m = 0x5bd1e995;
+    const len = bytes.length;
+    let h = 0x9747b28c ^ len;
+    for (let i = 0; i < (len >> 2); i++) {
+      const j = i * 4;
+      let k = (bytes[j] & 255) | ((bytes[j + 1] & 255) << 8) | ((bytes[j + 2] & 255) << 16) | ((bytes[j + 3] & 255) << 24);
+      k = Math.imul(k, m); k ^= k >>> 24; k = Math.imul(k, m);
+      h = Math.imul(h, m); h ^= k;
+    }
+    const t = len & ~3;
+    switch (len % 4) {
+      case 3: h ^= (bytes[t + 2] & 255) << 16;
+      case 2: h ^= (bytes[t + 1] & 255) << 8;
+      case 1: h ^= bytes[t] & 255; h = Math.imul(h, m);
+    }
+    h ^= h >>> 13; h = Math.imul(h, m); h ^= h >>> 15;
+    return h | 0;
+  }
+
+  function build() {
+    lanes.innerHTML = '';
+    for (let p = 0; p < PARTS; p++) {
+      const lane = document.createElement('div');
+      lane.className = 'lane';
+      lane.innerHTML = '<div class="lane-name">partition ' + p + '</div><div class="lane-cells"></div>';
+      lanes.appendChild(lane);
+    }
+    next = [0, 0, 0];
+  }
+
+  function send(key) {
+    let p, why;
+    if (key === '') {
+      p = sticky;
+      why = 'no key → the producer stays on partition ' + p + ' for this batch';
+      if (--stickyLeft === 0) { sticky = (sticky + 1) % PARTS; stickyLeft = 3; }
+    } else {
+      const hash = murmur2(new TextEncoder().encode(key));
+      const positive = hash & 0x7fffffff;
+      p = positive % PARTS;
+      why = 'murmur2("' + key + '") = ' + positive + '\n' + positive + ' mod ' + PARTS + ' = <b>' + p + '</b>';
+    }
+    const laneEls = [...lanes.children];
+    laneEls.forEach((l, i) => l.classList.toggle('target', i === p));
+    const cells = laneEls[p].querySelector('.lane-cells');
+    cells.querySelectorAll('.new').forEach((c) => c.classList.remove('new'));
+    const cell = document.createElement('div');
+    cell.className = 'cell new';
+    const offset = next[p]++;
+    cell.textContent = offset + ' ' + (key === '' ? '(no key)' : key);
+    cells.appendChild(cell);
+    cells.scrollLeft = cells.scrollWidth;
+    out.innerHTML = why + '\n→ partition <b>' + p + '</b>, offset <b>' + offset + '</b>';
+  }
+
+  build();
+  document.getElementById('pd-send').addEventListener('click', () => send(input.value.trim()));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(input.value.trim()); });
+  document.querySelectorAll('#part-demo [data-key]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.key; send(b.dataset.key); }));
+  document.getElementById('pd-reset').addEventListener('click', () => { build(); out.textContent = 'Cleared.'; });
+})();
+
+// ---------- find-by-offset demo ----------
+(function () {
+  const BASES = [0, 1000, 2000];
+  const END = 2600, GAP = 125, BYTES = 33;
+  const segs = document.getElementById('fd-segs');
+  const idx = document.getElementById('fd-idx');
+  const out = document.getElementById('fd-out');
+  const steps = [...document.querySelectorAll('#fd-steps li')];
+  const input = document.getElementById('fd-offset');
+  let timers = [];
+
+  const pad = (n) => String(n).padStart(20, '0');
+  BASES.forEach((b, i) => {
+    const c = document.createElement('div');
+    c.className = 'cell';
+    c.textContent = '…' + pad(b).slice(-5) + '.log' + (i === BASES.length - 1 ? ' (active)' : '');
+    segs.appendChild(c);
+  });
+
+  function run() {
+    timers.forEach(clearTimeout); timers = [];
+    let target = Math.round(Number(input.value));
+    if (!(target >= 0)) target = 0;
+    if (target >= END) target = END - 1;
+    input.value = target;
+
+    const s = BASES.reduce((best, b, i) => (b <= target ? i : best), 0);
+    const base = BASES[s];
+    const last = (s + 1 < BASES.length ? BASES[s + 1] : END) - 1;
+    const rel = target - base;
+    const entries = [];
+    for (let r = 0; base + r <= last; r += GAP) entries.push(r);
+    const hit = entries.filter((r) => r <= rel).pop();
+
+    steps.forEach((li) => li.classList.remove('on'));
+    [...segs.children].forEach((c) => c.classList.remove('hit'));
+    idx.innerHTML = '';
+    out.textContent = 'Looking for offset ' + target + ' …';
+
+    const delay = KB.reducedMotion ? 0 : 900;
+    timers.push(setTimeout(() => {
+      steps[0].classList.add('on');
+      segs.children[s].classList.add('hit');
+      out.innerHTML = 'Step 1: base offsets are ' + BASES.join(', ') + '. The largest one ≤ ' + target + ' is <b>' + base + '</b>.';
+    }, delay * 0));
+    timers.push(setTimeout(() => {
+      steps[1].classList.add('on');
+      entries.forEach((r) => {
+        const c = document.createElement('div');
+        c.className = 'cell' + (r === hit ? ' hit' : '');
+        c.textContent = r + ' → ' + (r * BYTES);
+        idx.appendChild(c);
+        if (r === hit) setTimeout(() => c.scrollIntoView({ block: 'nearest', inline: 'center' }), 0);
+      });
+      out.innerHTML = 'Step 2: the index stores offsets relative to the base, so look for ' + target + ' − ' + base + ' = ' + rel + '.\nNearest entry at or before it: relative offset <b>' + hit + '</b> → byte position <b>' + (hit * BYTES) + '</b>.';
+    }, delay * 1));
+    timers.push(setTimeout(() => {
+      steps[2].classList.add('on');
+      out.innerHTML = 'Step 3: open the .log file at byte ' + (hit * BYTES) + ' and read forward <b>' + (rel - hit) + '</b> records to reach offset <b>' + target + '</b>.\nThree small steps instead of reading ' + target + ' records from the start.';
+    }, delay * 2));
+  }
+  document.getElementById('fd-run').addEventListener('click', run);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+})();
+
+// ---------- retention demo ----------
+(function () {
+  const RETENTION = 3;
+  const segSel = document.getElementById('rd-seg');
+  const time = document.getElementById('rd-time');
+  const nowLabel = document.getElementById('rd-now');
+  const lane = document.getElementById('rd-segs');
+  const out = document.getElementById('rd-out');
+
+  function draw() {
+    const S = Number(segSel.value);
+    const t = Number(time.value);
+    nowLabel.textContent = t;
+    lane.innerHTML = '';
+    const active = Math.floor(t / S);
+    let oldestStart = null;
+    for (let i = 0; i <= active; i++) {
+      const start = i * S, end = (i + 1) * S;
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      const isActive = i === active;
+      // A closed segment's newest record was written at "end".
+      const deleted = !isActive && (t - end) > RETENTION;
+      if (isActive) { cell.classList.add('new'); cell.textContent = 'day ' + start + '–now'; }
+      else { cell.textContent = 'day ' + start + '–' + end; }
+      if (deleted) cell.classList.add('gone');
+      else if (oldestStart === null) oldestStart = start;
+      cell.style.animation = 'none';
+      lane.appendChild(cell);
+    }
+    const age = t - oldestStart;
+    let msg = 'Retention: ' + RETENTION + ' days. Oldest record still on disk: <b>' + age + ' days old</b>.';
+    if (age > RETENTION) msg += '\n<span class="warn">That is ' + (age - RETENTION) + ' days past retention.</span> The record waits for its whole segment to expire.';
+    else msg += '\nNothing has passed retention yet.';
+    msg += '\nWorst case with this setting: about ' + (RETENTION + S) + ' days, which is retention plus one segment period.';
+    out.innerHTML = msg;
+  }
+  segSel.addEventListener('change', draw);
+  time.addEventListener('input', draw);
+  draw();
+})();
+
+// ---------- compaction demo ----------
+(function () {
+  const CLOSED = [
+    [0, 'user-1', 'Paris'], [1, 'user-2', 'Rome'], [2, 'user-1', 'Berlin'],
+    [3, 'user-3', 'Oslo'], [4, 'user-2', null], [5, 'user-3', 'Lima'],
+  ];
+  const ACTIVE = [[6, 'user-1', 'Tokyo'], [7, 'user-4', 'Cairo']];
+  const closed = document.getElementById('cd-closed');
+  const activeEl = document.getElementById('cd-active');
+  const out = document.getElementById('cd-out');
+  const btn = document.getElementById('cd-step');
+  let stage = 0;
+
+  function cell(rec) {
+    const c = document.createElement('div');
+    c.className = 'cell' + (rec[2] === null ? ' tomb' : '');
+    c.dataset.offset = rec[0];
+    c.textContent = rec[0] + ' ' + rec[1] + '=' + (rec[2] === null ? '∅' : rec[2]);
+    c.style.animation = 'none';
+    return c;
+  }
+  function reset() {
+    stage = 0;
+    closed.innerHTML = ''; activeEl.innerHTML = '';
+    CLOSED.forEach((r) => closed.appendChild(cell(r)));
+    ACTIVE.forEach((r) => { const c = cell(r); c.classList.add('new'); activeEl.appendChild(c); });
+    btn.textContent = 'Run the cleaner';
+    btn.disabled = false;
+    out.textContent = 'Six records in closed segments, two in the active segment.';
+  }
+  function step() {
+    if (stage === 0) {
+      // Newest offset for each key, looking at closed segments only.
+      const newest = {};
+      CLOSED.forEach((r) => { newest[r[1]] = r[0]; });
+      [...closed.children].forEach((c) => {
+        const rec = CLOSED.find((r) => r[0] === Number(c.dataset.offset));
+        if (newest[rec[1]] !== rec[0]) c.classList.add('gone');
+      });
+      out.innerHTML = 'The cleaner removed offsets 0, 1 and 3: each has a newer record with the same key.\nIt kept <b>2 user-1=Berlin</b>, although offset 6 is newer, because offset 6 is in the active segment and the cleaner does not look there.\nIt kept the tombstone at offset 4 for now. The remaining offsets are 2, 4, 5: the log has gaps.';
+      btn.textContent = 'Let delete.retention.ms pass';
+      stage = 1;
+    } else if (stage === 1) {
+      closed.querySelector('[data-offset="4"]').classList.add('gone');
+      out.innerHTML = 'One day later the cleaner removes the tombstone too. Key <b>user-2</b> is now fully gone.\nA consumer that was offline for more than a day never saw the delete. That is the reason to raise delete.retention.ms.';
+      btn.disabled = true;
+      stage = 2;
+    }
+  }
+  btn.addEventListener('click', step);
+  document.getElementById('cd-reset').addEventListener('click', reset);
+  reset();
+})();
+</script>
+<script src="extras/01.js"></script>
+<script src="../assets/kb-play.js"></script>
+</body>
+</html>

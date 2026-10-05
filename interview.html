@@ -1,0 +1,1118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock interview · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+<style>
+  .intro-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1rem; align-items: start; margin: 1rem 0; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.2rem; min-width: 0; }
+  .card h2 { font-size: 1.1rem; margin: 0 0 .4rem; }
+  .card ul, .card ol { margin: .3rem 0; padding-left: 1.2rem; }
+  .card li { margin: .3rem 0; }
+  fieldset.flt { border: 1px solid var(--line); border-radius: 10px; padding: .6rem .8rem .8rem; margin: .8rem 0 0; min-width: 0; }
+  fieldset.flt legend { font-weight: 600; padding: 0 .4rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .chip { display: inline-flex; align-items: center; gap: .4rem; min-height: 40px; padding: .2rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); cursor: pointer; font-size: .92rem; }
+  .chip input { width: 18px; height: 18px; accent-color: var(--primary); }
+  .chip:has(input:checked) { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .8rem 0 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: .4rem; font: 500 .8rem var(--mono); color: var(--muted); margin-bottom: .5rem; }
+  .meta span { border: 1px solid var(--line); border-radius: 6px; padding: .05rem .4rem; }
+  #qtext { font-size: 1.15rem; font-weight: 600; margin: .4rem 0 .8rem; outline: none; overflow-wrap: anywhere; }
+  .timer { font: 600 2rem var(--mono); }
+  .timer.up { color: var(--gone); }
+  .answer-box { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: .8rem; }
+  .answer-box p { margin: .5rem 0; }
+  .score-row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: .8rem; }
+  .small { font-size: .9rem; color: var(--muted); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  table.res { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  table.res th, table.res td { text-align: left; padding: .45rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .loopbar { display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; align-items: center; }
+  .loopbar .timer { font-size: 1.4rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ mock interview</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="hero">
+  <div class="eyebrow">Kafka 4.3 · staff-level practice</div>
+  <h1>Mock interview</h1>
+  <p class="lede">Timed questions that you answer aloud. Think first, then compare your answer with a model answer, then score yourself against a short checklist.</p>
+</div>
+
+<div class="wide">
+
+<div class="intro-grid">
+  <div class="card">
+    <h2>How to practise</h2>
+    <ul>
+      <li>Answer aloud. Stand up. Do not read from the page.</li>
+      <li>State the trade-off and one number in every answer.</li>
+      <li>Say what you would check next.</li>
+      <li>Do not open the model answer until the timer ends or you have finished speaking.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>The five-part story</h2>
+    <p class="small">Use this shape for any "tell me about a time" or incident question.</p>
+    <ol>
+      <li>Situation: what was happening.</li>
+      <li>What I saw: the signals and numbers.</li>
+      <li>What I decided, and why.</li>
+      <li>What I got wrong.</li>
+      <li>What I changed afterwards.</li>
+    </ol>
+  </div>
+  <div class="card">
+    <h2>Phrases that cost points</h2>
+    <ul>
+      <li>"It depends", without saying on what.</li>
+      <li>"Exactly-once", without saying where it stops. A Kafka transaction does not cover a database write or an email.</li>
+      <li>"Just add partitions", without saying that keys then move to other partitions.</li>
+      <li>"Replication is our backup." A delete is copied to every replica.</li>
+      <li>"We will monitor it", without naming the alert, its limit and who is paged.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="note warn">
+  <p><strong>An honest note.</strong> The model answers are written for this knowledge base. They are not taken from real interviews. The Kafka facts in them are as verified as the module pages they come from. A real interview also tests coding and wider system design, which this page does not.</p>
+</div>
+
+<noscript><div class="note warn"><p>This page needs JavaScript for the timer, the question draw and the score keeping.</p></div></noscript>
+
+<div class="lab-panel" id="practice">
+  <h3>Practice mode</h3>
+  <p class="small">Choose what to practise, then draw a question. A question does not repeat until every question in your chosen set has been used.</p>
+  <fieldset class="flt"><legend>Kind</legend><div class="chips" id="f-kind"></div></fieldset>
+  <fieldset class="flt"><legend>Group</legend><div class="chips" id="f-grp"></div></fieldset>
+  <fieldset class="flt"><legend>Module</legend>
+    <div class="chips" id="f-mod"></div>
+    <div class="row"><button class="btn" type="button" id="mod-all">All modules</button><button class="btn" type="button" id="mod-none">No modules</button></div>
+  </fieldset>
+  <fieldset class="flt"><legend>Difficulty (1 easiest, 3 hardest)</legend><div class="chips" id="f-diff"></div></fieldset>
+  <div class="row">
+    <button class="btn primary" type="button" id="draw">Draw a question</button>
+    <button class="btn" type="button" id="loop-start">Start a mock loop (5 questions, 45 minutes)</button>
+    <span class="small" id="pool-info" aria-live="polite"></span>
+  </div>
+  <p class="small">The mock loop ignores the filters above. It picks one concept, one trade-off, one incident and two more from design and incident questions.</p>
+</div>
+
+<div class="lab-panel" id="loop-panel" hidden>
+  <h3>Mock loop</h3>
+  <div class="loopbar">
+    <div>Total time left <span class="timer" id="loop-timer" role="timer">45:00</span></div>
+    <div id="loop-pos" class="small"></div>
+    <button class="btn" type="button" id="loop-next">Next question</button>
+    <button class="btn" type="button" id="loop-cancel">Cancel loop</button>
+  </div>
+  <div class="readout" id="loop-msg" aria-live="polite">The total timer is running. It does not pause.</div>
+</div>
+
+<div class="lab-panel" id="qcard" hidden>
+  <div class="meta" id="qmeta"></div>
+  <h3 id="qtext" tabindex="-1"></h3>
+  <div class="controls">
+    <span class="timer" id="timer" role="timer" aria-label="Time left for this question">0:00</span>
+    <button class="btn primary" type="button" id="t-start">Start</button>
+    <button class="btn" type="button" id="t-pause">Pause</button>
+    <button class="btn" type="button" id="t-reset">Reset</button>
+  </div>
+  <div class="readout" id="t-msg" aria-live="polite">Think first. Answer aloud. Press Start when you begin to speak.</div>
+  <div class="row"><button class="btn" type="button" id="show-ans">Show model answer</button></div>
+  <div class="answer-box" id="ans" hidden>
+    <h4>Model answer</h4>
+    <div id="ans-body"></div>
+    <p class="small" id="ans-link"></p>
+    <h4>Score yourself</h4>
+    <p class="small">Tick each point you made aloud before you read the model answer.</p>
+    <div id="rubric"></div>
+    <div class="score-row">
+      <span id="rate-label">Overall rating</span>
+      <div class="seg" role="group" aria-labelledby="rate-label" id="rate">
+        <button type="button" data-r="1" aria-pressed="false">1 Missed it</button>
+        <button type="button" data-r="2" aria-pressed="false">2 Partly</button>
+        <button type="button" data-r="3" aria-pressed="false">3 Solid</button>
+      </div>
+      <span class="small" id="save-msg" aria-live="polite"></span>
+    </div>
+  </div>
+</div>
+
+<div class="lab-panel" id="summary" hidden>
+  <h3>Mock loop summary</h3>
+  <div id="summary-body"></div>
+</div>
+
+<div class="lab-panel" id="results">
+  <h3>Your results</h3>
+  <div class="stats" id="stats"></div>
+  <h4>Average rating by kind</h4>
+  <div class="table-wrap"><table class="res" id="by-kind"></table></div>
+  <h4>Average rating by group</h4>
+  <div class="table-wrap"><table class="res" id="by-grp"></table></div>
+  <h4>Average rating by module</h4>
+  <div class="table-wrap"><table class="res" id="by-mod"></table></div>
+  <h4>Five weakest questions</h4>
+  <div id="weak"></div>
+  <div class="row"><button class="btn" type="button" id="reset-all">Reset progress</button><span class="small">Results are kept in this browser only. The rating is your own score from 1 to 3.</span></div>
+</div>
+
+</div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var MODS = {
+    1: ['01-the-log', 'The log'], 2: ['02-producers', 'Producers'], 3: ['03-consumers', 'Consumers'],
+    4: ['04-replication', 'Replication'], 5: ['05-kraft', 'KRaft'], 6: ['06-transactions', 'Transactions'],
+    7: ['07-kafka-streams', 'Kafka Streams'], 8: ['08-ecosystem', 'Ecosystem'], 9: ['09-operations', 'Operations'],
+    10: ['10-multi-cluster', 'Multi-cluster'], 11: ['11-security-lab', 'Security'], 12: ['12-monitoring-lab', 'Monitoring'],
+    14: ['14-tiered-storage-lab', 'Tiered storage']
+  };
+  var KINDS = { concept: 'Concept', tradeoff: 'Trade-off', incident: 'Incident', design: 'Design' };
+  // Group of each question (field g). A question with no g belongs to the core set.
+  var GROUPS = {
+    core: 'Core questions',
+    e1: 'Experience and scale: tell me about an incident you handled',
+    e2: 'Experience and scale: what went wrong the first time',
+    e3: 'Experience and scale: scale',
+    e4: 'Experience and scale: failover',
+    e5: 'Experience and scale: how would you find out',
+    e6: 'Experience and scale: honest limits'
+  };
+  function grp(q) { return q.g || 'core'; }
+  var UNV = ' <span class="tag-unverified">unverified</span>';
+
+  // Each entry: id, m (module), k (kind), d (difficulty 1-3), t (minutes to speak), q, a (paragraphs), must, s (module section id)
+  var BANK = [
+    // ---------- Module 01 ----------
+    { id: 'q01a', m: 1, k: 'concept', d: 1, t: 2, s: 'internals',
+      q: 'Explain how a broker finds the record at offset 1740 in a partition. What is a segment?',
+      a: ['A partition is cut into segment files, and the broker finds a record in three steps.',
+          'First, it picks the segment by base offset. The base offset is the first offset in a segment, and it is also the file name. So 00000000000000001000.log starts at offset 1000. Second, it binary-searches the sparse .index file for the nearest earlier entry. Sparse means the index does not hold an entry for every record. Third, it scans forward in the .log file from that byte position until it reaches offset 1740.',
+          'The trade-off is a small index and a short scan, in place of an entry for every record. Only the active segment, the newest one, receives writes. It rolls when it reaches segment.bytes, reaches segment.ms, or its index file is full. Reading never changes the log. Only the group\'s committed offset moves.'],
+      must: ['Pick the segment by base offset (the file name)', 'Binary search in the sparse .index', 'Scan forward in the .log file', 'Only the active segment is written; name a roll trigger', 'Reading does not remove or change records'] },
+    { id: 'q01b', m: 1, k: 'tradeoff', d: 2, t: 3, s: 'staff',
+      q: 'Kafka does not force each write to disk. Do you accept that? When is it a risk?',
+      a: ['I accept it. Forcing every write to disk would remove most of the speed. Kafka writes to the operating system\'s page cache instead.',
+          'The cost is that one broker can lose its newest data in a power failure. Kafka protects the data by copying it to other brokers before it confirms the write. So the safety comes from replication, not from the disk.',
+          'The risk is a failure that hits all copies at once, such as one power source for all brokers. My answer is to spread brokers across racks or zones, not to force writes to disk.',
+          'The concrete check: for a critical partition with three copies, list the rack or zone of each copy. If one power source or zone holds all three, fix the placement.'],
+      must: ['Recommendation: accept the page cache', 'Reason: forced writes remove most of the speed', 'Safety comes from copies on other brokers before the confirmation', 'Risk: a failure that hits all copies at once', 'Remedy: spread brokers across racks or zones'] },
+    { id: 'q01c', m: 1, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'You are on call. The data disk of broker 2 is 91% full and rises about 1% every 20 minutes. What do you do?',
+      a: ['I measure first, then make the smallest safe change, then wait.',
+          'I have about three hours, because 1% every 20 minutes is about 9% in three hours. I run kafka-log-dirs.sh to find which topics use the space. Say one topic, clickstream, holds 70%. I check its consumers: if they are at most one hour behind, I lower retention.ms on that topic only, from 7 days to 2 days. Topic settings apply with no restart.',
+          'Then I wait. The retention check runs every 5 minutes, and files are removed 1 minute after that. I do not cut retention again after three minutes.',
+          'I never delete .log files by hand, restart the broker, or cut retention on every topic. The next morning I find why the disk filled, set alerts at 60% and 75%, and set retention.bytes as a safety limit.'],
+      must: ['Measure which topic uses the space before acting', 'A small, topic-level retention change, justified by consumer lag', 'Wait for the 5-minute check; do not overreact', 'Name what not to do: delete files, restart, cut every topic', 'Follow-up: find the cause, add alerts at lower levels'] },
+    { id: 'q01d', m: 1, k: 'design', d: 2, t: 7, s: 'staff',
+      q: 'An online shop takes up to 2,000 orders each second. Each order makes about 6 events of 500 bytes. Four teams consume them in order per order, and must be able to reprocess 30 days. A new service needs the current status of any order, even from last year. Design the topics and estimate the disk.',
+      a: ['Two topics. order-events, keyed by order id, with cleanup.policy=delete and 30 days of retention. order-status, keyed by order id, with cleanup.policy=compact, which keeps the latest status per order.',
+          'The key is the order id because it keeps each order in sequence and spreads load evenly. A customer id would put all orders of a large customer in one partition.',
+          'Partitions: the peak is 2,000 × 6 = 12,000 events each second. If the slowest consumer handles 1,000 each second per instance, I need 12 instances. I choose 24 or 36 for growth, because the key makes the count hard to change later.',
+          'Safety: 3 copies and min.insync.replicas=2 on both.',
+          'Disk: assume 4,000 events each second on average × 500 bytes = 2 MB each second. × 2,592,000 seconds × 3 copies is about 15.6 TB before compression, perhaps 4 TB after. The compacted topic grows with the number of orders. Set segment.ms to about a day so that the cleaner can work.'],
+      must: ['Two topics: delete for history, compact for latest status', 'Key is the order id, with a reason', 'Partition count worked from consumer speed, with room to grow', '3 copies and a minimum of 2', 'Disk arithmetic shown', 'Compacted topic needs segments to roll'] },
+
+    // ---------- Module 02 ----------
+    { id: 'q02a', m: 2, k: 'concept', d: 2, t: 3, s: 'staff',
+      q: 'Why can a producer have five requests in flight and still keep order?',
+      a: ['Because the broker checks sequence numbers. Idempotence, which is on by default, marks each batch with three values: the producer id, the producer epoch, and a sequence number for that partition.',
+          'The broker keeps the sequence numbers of the last five batches for each producer and partition. Suppose batch 1 fails while batches 2 to 5 are in flight. The broker rejects 2 to 5 because they leave a gap. The producer then resends all of them in order. The broker could not check more than five, which is why the limit is 5.',
+          'The limit of this protection is one session. If the application sends the same event again after a restart, the new session has a new producer id, and the duplicate is stored. Idempotence stops duplicates from the producer\'s own retries, not from application logic.'],
+      must: ['Broker keeps sequence numbers of the last 5 batches per producer and partition', 'A gap causes rejection and an in-order resend', 'Batch identity: producer id, epoch, sequence', 'Why the limit is 5', 'Limit of protection: a new session means a new producer id'] },
+    { id: 'q02b', m: 2, k: 'tradeoff', d: 2, t: 3, s: 'staff',
+      q: 'Product wants producer latency below 10 milliseconds. Do you give up durability to get it?',
+      a: ['No. If the data matters, I keep acks=all and make replication fast instead: brokers close to each other and fast disks.',
+          'On the producer, I set linger.ms=0 and keep batches small so they do not wait. In Kafka 4 the default linger.ms is 5 milliseconds, so the default alone uses half the budget. I turn off compression or use lz4.',
+          'The cost of linger.ms=0 is more, smaller batches. I measure the 99th percentile, not the average, and I watch for pauses in the client\'s runtime. A comparison of the 99th percentile at linger.ms of 0 and 5 on real traffic is my first check.',
+          'Then I ask whether 10 milliseconds is needed from end to end. The consumer\'s fetch settings add delay too.'],
+      must: ['Keep acks=all; speed up replication instead', 'linger.ms=0 and small batches; know the Kafka 4 default of 5 ms', 'Cheap or no compression', 'Measure the 99th percentile, not the average', 'Ask whether the target is end to end'] },
+    { id: 'q02c', m: 2, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'At 10:14 the order service logs NOT_ENOUGH_REPLICAS for the topic orders. Other topics are fine. Orders queue up in the service. What do you do?',
+      a: ['I describe the topic and read the in-sync set of each partition. I do not restart the service and I do not weaken any setting.',
+          'In the example, the replicas are 1, 2 and 3, and only broker 1 is in sync. The topic has min.insync.replicas=2, so the leader refuses writes it cannot protect. NOT_ENOUGH_REPLICAS is the cluster keeping its promise.',
+          'Broker 3 is down for planned maintenance, and broker 2 is out of sync because of a slow data disk. I stop the maintenance and bring broker 3 back. It catches up in about four minutes, the in-sync set is brokers 1 and 3, and writes resume. Then I take broker 2 out for repair.',
+          'I would not set min.insync.replicas=1 or acks=1. That leaves new orders on one broker. Afterwards I add a rule: no planned maintenance unless under-replicated partitions is 0, and an alert on that number.'],
+      must: ['Describe the topic and read the in-sync set first', 'Understand the error as a protection, not a bug', 'Restore replicas (bring the stopped broker back)', 'Do not lower the minimum or switch to acks=1', 'Prevention: maintenance rule and alert on under-replicated partitions'] },
+    { id: 'q02d', m: 2, k: 'design', d: 2, t: 6, s: 'staff',
+      q: 'You have two producers. A is a payments service: 300 events each second, each worth money, called from a web request that must answer in 200 ms. B is a clickstream collector: 80,000 events each second, where a few lost events are acceptable but a slow collector drops user traffic. Give the settings and the failure behaviour for each.',
+      a: ['A, payments. Safety first: acks=all, idempotence on, a topic with 3 copies and a minimum of 2. Volume is small, so linger.ms stays low, 0 to 5. I set max.block.ms and delivery.timeout.ms well below the usual values, for example 5 and 30 seconds, so that a broker problem becomes a clear error and does not hold web requests. On failure it never drops the event. Best is an outbox table written in the same database transaction as the payment, so the request does not depend on Kafka at all.',
+          'B, clickstream. batch.size=131072, linger.ms=20, compression.type=lz4. I keep acks=all, because the lab showed no measurable cost and it avoids silent loss. I give buffer.memory room and a low max.block.ms, so the collector never stalls. On a full buffer it drops the event and counts it. I alert on the drop count.',
+          'Both: a client.id, a callback that counts errors, and a quota on B so that it cannot starve A on a shared cluster.'],
+      must: ['acks=all, idempotence, 3 copies, minimum 2 for payments', 'Short blocking and delivery limits inside a web request', 'Large batches, linger and compression for clickstream', 'A failure action for each: never drop payments; drop and count clicks', 'Outbox or an equivalent for the payment event', 'client.id, error metrics and a quota'] },
+
+    // ---------- Module 03 ----------
+    { id: 'q03a', m: 3, k: 'concept', d: 1, t: 2, s: 'test',
+      q: 'Explain how a consumer commits offsets, and which delivery guarantee you get.',
+      a: ['Process first, then commit. That gives at-least-once delivery: after a crash some records are processed again, but none are skipped.',
+          'The consumer commits the next offset to read. If it has processed offset 41, it commits 42. Committed offsets live in the compacted internal topic __consumer_offsets, which has 50 partitions.',
+          'The trade-off is that repeats will happen, so the processing must be safe to repeat. I give every event a unique id. In the database I write the result and the event id in one transaction, with a unique constraint on the id. A repeat then fails the constraint and is skipped.',
+          'The check I run is kafka-consumer-groups.sh --describe --group, followed by the group name. It shows the lag: the log end offset minus the committed offset.'],
+      must: ['Process, then commit: at-least-once', 'Commit the next offset (42 after 41)', 'Offsets are stored in __consumer_offsets', 'Repeats happen: make processing safe to repeat (event id plus unique constraint)', 'Name the command that shows lag'] },
+    { id: 'q03b', m: 3, k: 'tradeoff', d: 2, t: 3, s: 'staff',
+      q: 'A new service starts on Kafka 4. Classic group protocol or the new one?',
+      a: ['The new one, if the brokers are Kafka 4 and the client is a 4.x Java client.',
+          'The gains: only the affected partitions stop during a change, a slow member cannot hold the whole group, and timeouts are managed in one place on the broker. The broker computes the assignment.',
+          'I check two things first. Clients in other languages may not support it yet. And a custom client-side assignor does not carry over, because the broker now does the assignment.',
+          'The concrete check is the list of client libraries in use, and whether any service depends on a custom assignor. If either answer is yes, that service stays on the classic protocol for now.'],
+      must: ['Recommend the new protocol on Kafka 4 with a 4.x Java client', 'Only affected partitions stop; slow member cannot hold the group', 'Broker computes the assignment, timeouts set on the broker', 'Risk: other-language clients may not support it', 'Risk: custom client-side assignors do not carry over'] },
+    { id: 'q03c', m: 3, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'The lag alert for group invoice-writer fires. Eleven of twelve partitions have lag near zero. Partition 7 has lag 40,000 and rising. What do you do?',
+      a: ['One partition only usually means one stuck record, not a slow group. I check whether the committed offset of partition 7 moves at all, and I read the consumer\'s log.',
+          'In the example the committed offset has been 881,204 for an hour, and the log shows the same parse error and restart again and again. Adding consumers would not help, because the topic has 12 partitions and the group already has 12 instances. Adding partitions would break key ordering and leave the record where it is.',
+          'To unblock: stop the group, move partition 7 forward by one offset with the offsets tool, save the bad record with its topic, partition and offset, and start the group. The partition drains in minutes.',
+          'To prevent it: catch the error, send the record to a dead-letter topic with the reason, commit and continue, and alert on that topic. Also alert when a partition\'s committed offset has not moved for some minutes while its end offset has.'],
+      must: ['Read the shape: one partition means one record or one hot key', 'Check whether the committed offset moves; read the log', 'Skip by one offset after saving the bad record; do not reset the whole group', 'Dead-letter topic with the reason, plus an alert on it', 'Alert on "offset not moving while end offset moves"'] },
+    { id: 'q03d', m: 3, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'A consumer must call a partner\'s HTTP service for each record. A call takes 1 to 3 seconds and sometimes fails for minutes. Peak input is 200 records each second. Records for one account must stay in order. No record may be lost and the partner must not get the same request twice. Design the consumer.',
+      a: ['Parallelism: 200 records each second at about 2 seconds is about 400 calls in progress. One call at a time per partition would need 400 partitions. So I use a worker pool inside each consumer. One thread polls and hands records to workers. Records of one account always go to the same worker, which keeps their order. 12 to 24 partitions are enough, sized for instances, not for calls.',
+          'Commits: auto-commit off. I commit only the highest offset below which everything is finished. I pause a partition when too many of its records are in progress, and keep calling poll() so the consumer stays in the group.',
+          'Errors: retry with growing pauses. If the partner is down, pause all partitions and wait. Do not push everything to a dead-letter topic. A record that fails for its own reason goes to a dead-letter topic at once, and later records of that account wait.',
+          'Duplicates: delivery is at-least-once, so I send a request id built from the event id, or from topic, partition and offset. The partner must ignore an id it has seen. Without that, "not twice" cannot be guaranteed.'],
+      must: ['Arithmetic: about 400 calls in progress', 'Worker pool keyed by account to keep order', 'Manual commit of the highest fully finished offset', 'Pause and resume while still polling', 'Partner outage and one bad record handled differently', 'Request id that the partner uses to ignore repeats'] },
+
+    // ---------- Module 04 ----------
+    { id: 'q04a', m: 4, k: 'concept', d: 2, t: 3, s: 'staff',
+      q: 'Why does Kafka use an in-sync set and not a majority vote for its data, as many databases do?',
+      a: ['Because the in-sync set needs fewer copies for the same fault tolerance, and that saves disk.',
+          'The in-sync set is the leader plus the followers that have caught up within replica.lag.time.max.ms. With majority voting, surviving f failures needs 2f + 1 copies. With an in-sync set, f + 1 copies are enough, because any member of the set has every committed record. For example, surviving two failures takes 5 copies by majority and 3 by in-sync set.',
+          'The cost is that a write waits for the slowest in-sync replica. A majority system waits only for the faster half. Kafka limits the cost with a time rule that removes a slow follower. Kafka does use majority voting for its metadata, where the data is small and latency matters more.',
+          'The check: describe the topic and see the in-sync set of each partition.'],
+      must: ['f + 1 copies against 2f + 1 copies', 'Any in-sync member has every committed record', 'Cost: a write waits for the slowest in-sync replica', 'The time rule that removes a slow follower', 'Majority voting is used for metadata'] },
+    { id: 'q04b', m: 4, k: 'tradeoff', d: 1, t: 3, s: 'staff',
+      q: 'Why is "3 replicas, minimum 2" the standard? Why not a minimum of 1 or 3?',
+      a: ['Three replicas with a minimum of 2 survives one broker failure with writes still accepted, because two in-sync replicas remain.',
+          'Every acknowledged record is on at least two brokers, so one permanent loss cannot remove it. And you can restart brokers one at a time without stopping producers.',
+          'A minimum of 1 gives up durability: an acknowledged record may sit on one broker. A minimum of 3 gives up availability, because any restart blocks writes. Two replicas with a minimum of 2 also stop writes on any single failure.',
+          'The check before a rolling restart: no partition is under-replicated. And a describe of all topics to find any with fewer than 3 replicas or a minimum of 1.'],
+      must: ['3 and 2 survives one failure and keeps writes', 'Every acknowledged record is on at least two brokers', 'Minimum 1 loses durability', 'Minimum 3 loses availability during any restart', 'Check topics for settings below the standard'] },
+    { id: 'q04c', m: 4, k: 'incident', d: 3, t: 6, s: 'failures',
+      q: 'Partition 4 of payments shows Leader: none, Isr: empty, Elr: 2. Replicas are brokers 2 and 5. Broker 2 crashed twenty minutes ago and broker 5 is running. A manager says "just make it work". What do you do?',
+      a: ['I do not force an unclean election yet. First I find out why broker 5 will not lead. It was not in sync when broker 2 failed, so it lacks some committed records. Elr: 2 names the broker that has them all.',
+          'An unclean election makes the partition available and loses every record broker 5 does not have. Payments that customers were told succeeded would no longer exist, and broker 2 would delete its copies when it returns.',
+          'So I ask the manager\'s question back: how long until broker 2 is back, and is its disk intact? In the example it had a kernel panic, disks are fine, and a restart takes about five minutes. I wait, and I report five more minutes of outage with no data loss.',
+          'If the disk were destroyed, the data is gone either way. Then I elect broker 5 uncleanly and record the last offset it has, so the gap can be reconciled from the source systems.'],
+      must: ['Explain why broker 5 is not eligible (it lacks committed records)', 'Use Elr to find the broker that has everything', 'Name what an unclean election loses', 'Ask how long until broker 2 returns and whether its disk is intact', 'If the disk is destroyed, elect uncleanly and record the lost range'] },
+    { id: 'q04d', m: 4, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'Design a cluster in one region with three zones. It must survive one zone with no lost acknowledged record and with writes continuing, allow rolling restarts during business hours, and keep cross-zone cost reasonable.',
+      a: ['Brokers: a multiple of three, at least 6, two in each zone. I set broker.rack to the zone, so the three replicas of each partition sit in three zones. I size so that four brokers can carry the load, because losing a zone removes a third of the capacity.',
+          'Controllers: three dedicated ones, one in each zone. Any zone can fail and a majority remains.',
+          'Settings: 3 copies, min.insync.replicas=2, acks=all, unclean election off.',
+          'Zone loss: each partition loses one replica and keeps two in sync. Leaders move within seconds. Writes continue and nothing acknowledged is lost.',
+          'Zone loss during a rolling restart: partitions whose other replica was on the restarting broker have one in-sync replica. Writes to those stop until the broker returns, a few minutes, with nothing lost. To avoid even that, use 5 copies with a minimum of 3 for the most critical topics, or pause restarts when a zone is unhealthy.',
+          'Cost: every write is copied to two other zones. Reads can stay local with client.rack on consumers and the rack-aware selector on brokers.'],
+      must: ['Brokers evenly across zones with broker.rack', 'Capacity sized for the loss of one zone', 'Three controllers, one per zone', '3 copies, minimum 2, acks=all, unclean election off', 'A zone failure during a restart, and its cost', 'Reading from a follower in the same zone'] },
+
+    // ---------- Module 05 ----------
+    { id: 'q05a', m: 5, k: 'concept', d: 2, t: 3, s: 'staff',
+      q: 'Why did Kafka replace ZooKeeper, and how does a metadata change become committed in KRaft?',
+      a: ['The controllers keep all cluster metadata in one ordered log, the topic __cluster_metadata, which has one partition. The active controller makes each decision, such as a leader election or a topic creation, and writes it to that log. A record is committed when a majority of controllers have it. With five controllers, two can fail. Brokers copy the log but do not vote.',
+          'Three reasons for the change. Operations: one system to run, not two. Scale: a KRaft controller already holds the log in memory and takes over in about a second, where the old design loaded all metadata first, which took minutes on large clusters. Correctness: the old design had two sources of truth that could disagree.',
+          'The cost to remember: if the majority is lost, existing leaders keep serving clients, but nothing can change, including replacing a failed leader.',
+          'The check: kafka-metadata-quorum.sh describe --status, and read LeaderId.'],
+      must: ['One ordered metadata log, __cluster_metadata', 'Committed when a majority of controllers have the record', 'Three reasons: operations, scale (about 1 second failover), one source of truth', 'Brokers observe but do not vote', 'Without a majority, existing leaders serve but nothing changes'] },
+    { id: 'q05b', m: 5, k: 'tradeoff', d: 2, t: 4, s: 'staff',
+      q: 'You run three controllers in a cloud region that has only two zones. Where do they go?',
+      a: ['I add a third location that hosts only a controller. A controller is small and cheap, so this is the better trade.',
+          'With three zones, one controller in each zone means any zone can fail and a majority remains. With two zones, one zone must hold two controllers. Losing that zone loses the majority, and metadata changes stop.',
+          'The other option is to accept that one specific zone failure stops metadata changes, and to write the manual recovery steps in advance.',
+          'Be clear about what stops. Existing leaders keep serving clients. But a failed broker\'s partitions get no new leader, so the situation gets worse with every broker failure. Four controllers do not help: a majority of four is three, so they survive one failure, the same as three.',
+          'My check: place the controllers and count how many one zone loss removes. If it is two of three, the layout fails.'],
+      must: ['Recommendation: a third location for a controller only', 'One zone holding two controllers loses the majority with that zone', 'Alternative: accept the risk and write manual recovery steps', 'What keeps working and what stops during the loss', 'Four controllers do not survive more failures than three'] },
+    { id: 'q05c', m: 5, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'A pipeline reports that kafka-topics.sh --create has hung for five minutes. Existing producers and consumers look fine. The cluster has 3 controllers. What do you do?',
+      a: ['Existing traffic works but a metadata change hangs, so I suspect the controller quorum. I check which controller processes run and try kafka-metadata-quorum.sh describe --status.',
+          'In the example that command also hangs. Controller 1 runs, but controllers 2 and 3 do not: a configuration change was rolled to both at once and they failed to start. One of three is not a majority, so the cluster cannot elect a leader. Existing leaders still serve, but if any broker fails now, its partitions get no new leader. That makes it urgent although nothing looks broken.',
+          'I fix the configuration on one controller, start it, and confirm a leader is elected. Two of three is a majority, and the create command completes. Then I repair the other.',
+          'I do not restart brokers, delete metadata directories, or reformat with a new cluster id. The rule afterwards: change one controller at a time and check the quorum status between each.'],
+      must: ['Suspect the controller quorum; check quorum status', 'One of three is not a majority', 'Existing leaders serve, but a broker failure would not be healed', 'Fix and start one controller, then the other', 'Never delete metadata directories or reformat', 'Prevention: one controller at a time with a status check'] },
+    { id: 'q05d', m: 5, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'You run 60 brokers and about 150,000 partitions in three zones. Three nodes in combined mode act as controllers, left over from a pilot. You see controller elections at traffic peaks. Propose the layout, the migration and the monitoring.',
+      a: ['Cause: in combined mode the controller shares a process with a busy broker. At peak, pauses and disk waits make it miss the 2-second fetch deadline, and the others start an election.',
+          'Target: three dedicated controller servers, one in each zone, with fast disks for the metadata log and nothing else running. Consider five to survive a failure during maintenance.',
+          'Migration: never lose the majority. Add the new controllers and remove the old ones one at a time, checking quorum status and follower lag after each step. Rehearse on a test cluster and read the documentation for your version.' + UNV + ' The module itself says this exact migration was not run.',
+          'Scale: when a broker fails, the controller writes a change record for every partition that broker touched, about 7,500 here. Keep that in mind for failover time and do not grow partition counts without need.',
+          'Monitor: exactly one active controller; the leader epoch, which should not rise; each voter\'s lag; metadata log disk latency; the count of fenced brokers.'],
+      must: ['Why combined mode causes elections under load', 'Dedicated controllers, odd number, spread over zones', 'One voter at a time, with quorum and lag checks', 'Rehearse and check the documentation for the version', 'Cost of a broker failure in change records (about 7,500)', 'Monitor active count, epoch, voter lag'] },
+
+    // ---------- Module 06 ----------
+    { id: 'q06a', m: 6, k: 'concept', d: 3, t: 4, s: 'test',
+      q: 'Walk through what happens when a transactional producer commits, and what a read_committed consumer sees.',
+      a: ['The coordinator decides the outcome. The deciding step is the coordinator writing "prepare commit" to its own log. Everything after that can be repeated safely.',
+          'It then writes a marker, a control record that says commit or abort, to each partition in the transaction. Each marker uses one offset. So a topic with 30 records and three committed transactions ends at offset 33.',
+          'Records of an open transaction are already in the partition. A read_committed consumer reads only below the last stable offset: the offset of the first record of the oldest open transaction in that partition. The default isolation level is read_uncommitted, which also shows aborted records. The lab showed 68 records against 30.',
+          'The cost: one open transaction delays every committed reader of its partitions. The check: kafka-transactions.sh list shows open transactions.'],
+      must: ['"Prepare commit" in the coordinator\'s log decides the outcome', 'A marker in each partition, using one offset', 'Last stable offset limits read_committed readers', 'Default isolation is read_uncommitted', 'One open transaction delays committed readers'] },
+    { id: 'q06b', m: 6, k: 'tradeoff', d: 2, t: 4, s: 'staff',
+      q: 'A team asks for Kafka transactions. When do you say yes, and when do you suggest something simpler?',
+      a: ['I say yes for a stream processing step that reads from Kafka and writes to Kafka, where a duplicate in the output is a real problem, such as money totals or counts that later steps trust.',
+          'I say no when consumers can ignore repeats cheaply by an id, or when occasional duplicates do no harm, such as metrics. Simpler: give each event an id and let consumers skip repeats.',
+          'And I warn that a transaction is not enough when the important effect is outside Kafka. A database write or an email is not covered, and there a transaction gives a false sense of safety.',
+          'The cost to state: extra load on the coordinators and on __transaction_state, one marker for each partition in each transaction, and the risk that one open transaction delays every committed reader of a partition. My check is the commit interval: it adds directly to end-to-end delay.'],
+      must: ['Yes: Kafka-to-Kafka steps where duplicates hurt', 'No: duplicates are cheap to ignore by id, or harmless', 'Not sufficient: effects outside Kafka', 'Costs: coordinator load, markers, blocked readers', 'Commit interval adds to delay'] },
+    { id: 'q06c', m: 6, k: 'incident', d: 3, t: 5, s: 'failures',
+      q: 'The settlement team\'s read_committed consumer has received nothing for 12 minutes. The topic end offset is rising. A default consumer reads new records fine. What do you do?',
+      a: ['A default consumer reads and a read_committed consumer does not. That points to an open transaction holding the last stable offset. I run kafka-transactions.sh list and describe.',
+          'In the example it shows the id enricher-7 in state Ongoing, started 12 minutes ago, with a 15-minute timeout. The producer is alive but waits for a slow call to another service inside its transaction. That is a design fault in the producer.',
+          'Short term: restart enricher-7. Its new start calls initTransactions(), which aborts the open transaction at once, and the settlement consumer drains its backlog in two minutes. Waiting for the timeout would block settlement three more minutes, then the same thing repeats. I do not switch the consumer to read_uncommitted, because it would then settle payments from transactions that may be aborted. I never delete __transaction_state.',
+          'Long term: do the slow call before the transaction begins, keep transactions short, and lower transaction.timeout.ms to about a minute.'],
+      must: ['Diagnose an open transaction behind the last stable offset', 'Use kafka-transactions.sh list and describe', 'Restart with the same id: initTransactions() aborts the open transaction', 'Do not use read_uncommitted or delete __transaction_state', 'Fix: no outside calls inside a transaction; lower the timeout'] },
+    { id: 'q06d', m: 6, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'A service reads payments, computes each merchant\'s daily total and must store it in PostgreSQL. A payment counted twice means a merchant is overpaid. Design the processing so each payment affects the total exactly once, through crashes and rebalances.',
+      a: ['First, name the boundary. A Kafka transaction cannot include PostgreSQL. So the database\'s own transaction is the atomic unit, and the Kafka position goes inside it.',
+          'For each batch, in one database transaction: update the totals, and store the next offset for each partition in an offsets table. I do not rely on Kafka\'s committed offsets. On start, and whenever partitions are assigned, I read the offsets table and call seek().',
+          'Why it is exactly-once: the total and the position change together or not at all. After a crash, the consumer continues from the position the database holds, which matches the totals it holds.',
+          'Stale instances: after a rebalance a slow old owner may still write. I update the offsets row only if the stored offset equals the offset the batch started from. A stale writer updates zero rows and its transaction rolls back.',
+          'Alternative: a table of processed payment ids with a unique constraint. It is simpler, but the table grows and needs cleaning. If payments is written with transactions, read it with read_committed.'],
+      must: ['Kafka transactions do not cover the database', 'Offsets stored in the database in the same transaction as the totals', 'seek() to stored offsets on start and assignment', 'Guard against a stale instance after a rebalance', 'Alternative with unique payment ids, and its cost', 'read_committed on a transactional input'] },
+
+    // ---------- Module 07 ----------
+    { id: 'q07a', m: 7, k: 'concept', d: 2, t: 4, s: 'staff',
+      q: 'How does a Kafka Streams application keep state, and how does it recover when an instance dies?',
+      a: ['State lives in a local store on each instance. Every change to a store is also written to a changelog: a compacted internal topic for that store. Recovery means rebuilding the store from the changelog.',
+          'A task is one unit of processing for one sub-topology and one input partition. Restoration time is roughly the changelog size divided by the read rate. If that is longer than you can accept, add a standby replica: a warm copy of the store on another instance, kept up to date by reading the changelog. Failover then does not wait for a full restoration. Also keep disks across restarts.',
+          'To size it, estimate the store as number of keys times value size, plus overhead. That is the local disk for each instance\'s share and also the size of the changelog.',
+          'With exactly-once, the local store after an unclean stop may not match the last committed transaction, so it is wiped and restored. Crash recovery is slower.'],
+      must: ['Local store plus a compacted changelog topic', 'Recovery rebuilds the store from the changelog', 'Restoration time is changelog size divided by read rate', 'Standby replicas remove the wait', 'Size the store: keys times value size plus overhead'] },
+    { id: 'q07b', m: 7, k: 'tradeoff', d: 2, t: 4, s: 'staff',
+      q: 'A join must use a 50-million-row reference table. KTable or GlobalKTable?',
+      a: ['A KTable, with the stream repartitioned to the table\'s key if needed.',
+          'A GlobalKTable loads all 50 million rows into every instance. That is simple and needs no co-partitioning, but each instance needs the disk and a long first load. A KTable gives each instance only its partitions, and it needs both topics co-partitioned on the join key: the same number of partitions and the same partitioning by key.',
+          'I keep GlobalKTable for small data such as country codes, or for the case where the stream must be joined on a field that is not its key and repartitioning costs too much.',
+          'The concrete check: key count times value size, which gives the disk each instance would need as a GlobalKTable. With 50 million rows that number decides the question.'],
+      must: ['Recommend a KTable for 50 million rows', 'GlobalKTable copies every row to every instance', 'KTable needs co-partitioning on the join key', 'Repartition the stream when needed', 'GlobalKTable is for small data or non-key joins'] },
+    { id: 'q07c', m: 7, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'A Streams application counts page views per article. An hour after a release, every count is near zero. What do you do?',
+      a: ['I list the internal topics for this application id, before and after the release.',
+          'In the example there are now two changelog topics: the old one full of data, and a new one, with a different generated number in its name, almost empty. Internal topic names contain a generated number. The release added a filter step before the count, which shifted the numbers, so the count now uses a new, empty store. The old store is untouched but nothing reads it.',
+          'The fix: release again with the count step given an explicit name that matches the old store. The application restores from the old changelog and the counts return. The views of the last hour, counted in the new store, are replayed from the input topic for that hour.',
+          'The rule afterwards: every stateful step and every repartition gets an explicit name, and a test compares the topology description between releases.'],
+      must: ['Compare the internal topics before and after the release', 'Generated names shift when a step is added', 'The new count reads a new, empty store', 'Fix: give the step the old explicit name and restore', 'Rule: name every stateful step; test the topology description'] },
+    { id: 'q07d', m: 7, k: 'design', d: 3, t: 8, s: 'staff',
+      q: 'Orders arrive keyed by order id, 24 partitions, 5,000 each second. Each must be enriched with the customer\'s tier and country from customers, a compacted topic of 50 million customers keyed by customer id, with 12 partitions. Design the Streams topology and its operation.',
+      a: ['Join key: the join is on customer id, but orders are keyed by order id. So I re-key orders by customer id with selectKey, which creates a repartition topic. I set that topic to 12 partitions, the same as customers, and name it.',
+          'Table: 50 million rows is too large for a GlobalKTable in every instance. I use a KTable, so each task holds only its partition\'s customers.',
+          'Join: a stream-table left join, so an order with an unknown customer still flows, with empty customer fields and a marker, and can be repaired later. An inner join would drop it silently. I set max.task.idle.ms above zero so that the table loads before orders are joined against it at start-up.',
+          'Output: re-key by order id before writing, if consumers expect that.',
+          'Operation: the customer store is large, so state.dir goes on a durable disk, with one standby replica and a named store. I choose exactly_once_v2 by asking whether a duplicate enriched order hurts the consumers.'],
+      must: ['Re-key by customer id; repartition topic', 'Same partition count as the table (12), named explicitly', 'KTable, not GlobalKTable, for 50 million rows', 'Left join so unknown customers are not dropped', 'max.task.idle.ms for start-up', 'Durable state disk, a standby, a named store, and a reasoned choice on exactly-once'] },
+
+    // ---------- Module 08 ----------
+    { id: 'q08a', m: 8, k: 'concept', d: 2, t: 4, s: 'staff',
+      q: 'Explain how a schema registry protects consumers, and how you make a breaking change anyway.',
+      a: ['A broker sees only bytes. With a registry, each record carries a schema id, not the schema. The registry checks each new schema against a compatibility mode before it accepts it.',
+          'BACKWARD means a consumer on the new schema can read data written with the previous one. Adding a field without a default is refused: the lab registry answered READER_FIELD_MISSING_DEFAULT_VALUE. I set BACKWARD as the company default. For long retention or replays I use BACKWARD_TRANSITIVE. For topics that many teams read, FULL_TRANSITIVE: only optional fields can come and go.',
+          'A breaking change is never made in place. Create a new topic with the new schema. Produce to both, or run a small job that converts. Move consumers one by one. Stop the old topic when its last consumer has left and its retention has passed. This is slow on purpose, because a topic\'s schema is a public interface.',
+          'One more risk: the _schemas topic. Without it nobody can decode records. Keep three copies and a tested backup outside the cluster.'],
+      must: ['Records carry a schema id; the registry checks compatibility', 'BACKWARD means new reader, old data', 'Example of a refused change: a field without a default', 'Breaking change: new topic, dual produce or convert, migrate consumers, retire the old topic', 'Protect the _schemas topic'] },
+    { id: 'q08b', m: 8, k: 'tradeoff', d: 2, t: 4, s: 'staff',
+      q: 'Eight teams need your service\'s order events. Outbox table, or change data capture on the business tables?',
+      a: ['For events that other teams consume, an outbox.',
+          'Capture on the business tables is quick to start and needs no application change. Change data capture means a connector reads the database\'s own log of changes. But it publishes the internal table layout, so every consumer then depends on your columns, and a database refactoring breaks them.',
+          'An outbox publishes events you designed, with a stable shape and a business meaning such as "order confirmed". The cost is that the application must write them: in the same database transaction as the business change, into an outbox table. A capture connector then publishes the rows, keyed by order id so that the events of one order stay in order.',
+          'For copying data to a warehouse or a cache you own, direct capture is fine.',
+          'Either way, consumers get the event at least once, so each stores the event id and ignores repeats. My operational check is the connector\'s task state and its lag behind the database log.'],
+      must: ['Recommendation: outbox for events other teams consume', 'Direct capture publishes the table layout as a public interface', 'Outbox events have business meaning and a stable shape', 'Direct capture is fine for a warehouse or cache you own', 'Consumers must tolerate repeats by event id'] },
+    { id: 'q08c', m: 8, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'The orders table in the warehouse has had no new rows for three hours. A sink connector feeds it. The Connect dashboard shows the connector as green. What do you do?',
+      a: ['I look at the status of the connector\'s tasks through the HTTP interface, not at the connector.',
+          'In the example the connector is RUNNING and task 0 is FAILED, with a conversion error on one record. The dashboard only showed the connector\'s state. A producer sent a text value where a number was expected, and thousands of good records wait behind it.',
+          'To unblock: update the connector with errors.tolerance=all and a dead-letter topic with context headers, then restart the task. The bad record goes to the dead-letter topic with its origin and error, and the backlog drains in about six minutes. errors.tolerance=all without a dead-letter topic would skip the record without keeping it.',
+          'Then find which producer wrote the bad value, fix it, and replay the corrected record. Two things make this a non-event next time: an alert on task state and on records in the dead-letter topic, and a schema on the topic so the producer\'s bad record is refused.'],
+      must: ['Check task status, not connector status', 'Find the conversion error on one record', 'errors.tolerance=all with a dead-letter topic, restart the task', 'Fix the producer; replay the corrected record', 'Alerts on task state and dead-letter records; a schema at the producer'] },
+    { id: 'q08d', m: 8, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'An order service stores orders in PostgreSQL. Eight teams need to know when an order is created, paid or cancelled. Today the service writes to the database and then sends to Kafka, and events are sometimes missing. Design a reliable way to publish them, including the schema, and say what consumers must do.',
+      a: ['Cause: two separate writes. A crash, a timeout or an error between them leaves the database and Kafka different. This is the dual write problem.',
+          'Outbox: in the same database transaction as the order change, insert a row into an outbox table: event id, order id, event type, payload, created time. A change data capture connector reads new outbox rows from the database log and publishes them to order-events, keyed by order id.',
+          'Not the orders table directly: that would publish the table layout as a public interface.',
+          'Schema: register the event schema with BACKWARD or FULL compatibility, check compatibility in the build pipeline, and turn automatic registration off in production.',
+          'Consumers: delivery is at-least-once, so each stores the event id with its own result and ignores an id it has seen.',
+          'Operation: clean old outbox rows. Monitor the connector\'s task state and its lag behind the database log, because a stopped connector makes the database keep its log. Give the topic 3 copies and a minimum of 2.'],
+      must: ['Name the dual write problem', 'Outbox row written in the same transaction; capture connector publishes', 'Key by order id', 'Schema with a compatibility mode, checked in the build', 'Consumers store event ids and ignore repeats', 'Monitor connector tasks and lag; clean the outbox'] },
+
+    // ---------- Module 09 ----------
+    { id: 'q09a', m: 9, k: 'concept', d: 2, t: 3, s: 'staff',
+      q: 'Explain what tiered storage moves and when it is worth using.',
+      a: ['Closed segments are copied to remote storage and removed locally after the local retention. The active segment stays local.',
+          'It is worth it when retention is long compared with how far back most consumers read. Then most local disk holds data that is rarely touched. Moving it out cuts disk cost, and it makes brokers faster to replace and to rebalance, because there is less local data to copy. For example, in the sizing exercise it could cut local disk to a day or two.',
+          'It is not worth it for short retention, or when consumers often read old data and need the speed of local disk. I would also check how it combines with compacted topics in my version before I plan on it.',
+          'The check: look at how far behind the slowest regular consumer reads, and compare it with retention.'],
+      must: ['Closed segments move; the active segment stays local', 'Worth it when retention is long compared with typical read distance', 'Benefit: lower disk cost and faster broker replacement or rebalance', 'Not worth it for short retention or frequent old reads', 'Check the interaction with compacted topics'] },
+    { id: 'q09b', m: 9, k: 'tradeoff', d: 2, t: 4, s: 'staff',
+      q: 'One large Kafka cluster or several smaller ones?',
+      a: ['A few clusters, split by criticality or by data sensitivity. Not one cluster for everything, and not one for each team.',
+          'One cluster is cheaper to run, makes data easy to share, and uses hardware well. But every tenant shares its failures, its upgrades and its limits, and one bad client or topic can hurt all.',
+          'Several clusters isolate failure and let teams upgrade at their own pace. The cost is more operations work and copying data between clusters.',
+          'Quotas and access control are what make sharing a cluster workable. So my first check is whether we can name each client and limit it. If we cannot, sharing is not yet safe.'],
+      must: ['A reasoned recommendation', 'One cluster: cheaper, easy sharing; shared failure and upgrades', 'Several clusters: isolation; more operations and copying', 'Split by criticality or data sensitivity', 'Quotas and access control make sharing workable'] },
+    { id: 'q09c', m: 9, k: 'incident', d: 3, t: 5, s: 'failures',
+      q: 'At 14:05 the 99th percentile produce latency on broker 4 rises from 15 ms to 60 ms. Write traffic is flat. Other brokers are normal. What do you do?',
+      a: ['One broker and flat writes: I compare disk reads and network out on broker 4 against the other brokers.',
+          'In the example, disk read throughput on broker 4 jumped from almost zero to 180 MB each second at 14:04. A broker normally reads almost nothing from disk, because recent data is in memory. Something is reading old data. I look for a consumer group far behind, and at fetch rates for each client id on that broker. A group named ml-backfill started at 14:04 from the earliest offset of a 3 TB topic.',
+          'The work is legitimate, so I put a fetch quota on its client id. With a limit of 20 MB each second, disk reads fall, recent data stays in memory, and produce latency returns to 15 ms. The backfill runs slower, but it runs.',
+          'For the future: default quotas for every client, a named process for large replays, and consider tiered storage so old reads do not use broker disks.'],
+      must: ['Compare broker 4 with the others: disk reads and network', 'Recognise a cold-data reader evicting recent data from memory', 'Find the client id of the reader', 'A fetch quota on that client, with a number', 'Defaults: quotas for all, a replay process, tiered storage'] },
+    { id: 'q09d', m: 9, k: 'design', d: 3, t: 8, s: 'staff',
+      q: 'Size a cluster for 100 MB each second, 7 days of retention and 3 copies.',
+      a: ['Storage: 100 MB × 604,800 seconds × 3 is about 181 TB without compression. With a 4-times compression ratio it is about 45 TB. With 40% free, I provide about 76 TB. At 4 TB for each broker that is 19 brokers by disk alone. At 8 TB, 10 brokers.',
+          'Network: clients send 100 MB each second and followers receive 200 more, so about 300 MB each second comes in across the cluster, plus consumer reads going out. I check each broker\'s share against its network link, after one broker has failed.',
+          'Why 40% free: for growth, retention overshoot, reassignments and the extra load when another broker fails.',
+          'Next steps: confirm the compression ratio on real data, test one broker\'s limits on the real hardware, and consider tiered storage, which could cut local disk to a day or two.'],
+      must: ['Formula: rate × retention × copies, divided by compression', 'Free-space headroom (about 40%) and why', 'Broker count from disk size, with both examples', 'Network: 300 MB each second in, checked after one broker fails', 'Next steps: measure compression, test one broker, consider tiering'] },
+
+    // ---------- Module 10 ----------
+    { id: 'q10a', m: 10, k: 'concept', d: 2, t: 4, s: 'staff',
+      q: 'Explain how MirrorMaker 2 copies a topic to another cluster, and what happens to consumer offsets.',
+      a: ['MirrorMaker 2 is built on Kafka Connect: a source connector copies records, a checkpoint connector translates offsets, and a heartbeat connector writes records that show how recent the copy is.',
+          'By default the copy is named with the source alias in front. The topic orders from the cluster with alias main becomes main.orders on the target. The identity policy keeps names the same, which is useful for a migration.',
+          'A consumer cannot reuse its committed offsets on the other cluster. The copy is a new topic with its own offsets, so they must be translated. After a failover, a consumer starts a little before where it was, and some records repeat. So consumers must be safe to repeat.',
+          'The copy is not synchronous. The producer is answered before the record reaches the other cluster. The copy delay is the possible data loss. I monitor it.'],
+      must: ['Built on Connect: source, checkpoint and heartbeat connectors', 'Prefixed names such as main.orders; identity policy keeps names', 'Offsets differ and must be translated', 'Copying is asynchronous, so the delay is the possible loss', 'Consumers must tolerate repeats'] },
+    { id: 'q10b', m: 10, k: 'tradeoff', d: 3, t: 5, s: 'staff',
+      q: 'The business says "we cannot lose any payment event, even if a region is lost". What do you propose?',
+      a: ['First I make the requirement precise: zero loss of acknowledged records, and how long may the service be down? Zero loss rules out asynchronous copying alone.',
+          'Option one: a stretch cluster over three zones of one region, with a minimum of 2 and acks=all. It survives a zone, not a region.',
+          'Option two, for a real region loss: keep the source of truth in a database that is itself replicated synchronously, publish through an outbox, and treat Kafka in the second region as rebuildable from that source. Then Kafka\'s asynchronous copy only decides how fast we recover, not what we lose.',
+          'State the cost plainly. Synchronous replication across regions makes every payment slower, all year, to protect against a rare event.',
+          'My check is the two agreed numbers: how much data loss and how much downtime are allowed. In the failover example they were 1 minute and 15 minutes.'],
+      must: ['Make the requirement precise: loss and downtime limits', 'Asynchronous copy alone cannot give zero loss', 'Option one: stretch cluster survives a zone, not a region', 'Option two: synchronously replicated source of truth plus outbox', 'The latency cost of synchronous cross-region replication'] },
+    { id: 'q10c', m: 10, k: 'incident', d: 3, t: 6, s: 'failures',
+      q: 'At 03:20 every connection to the main region fails. You have a standby cluster fed by MirrorMaker 2. The agreed limits are 15 minutes of downtime and 1 minute of data. What do you do?',
+      a: ['I follow the runbook\'s decision rule: if the region is unreachable for 5 minutes, the on-call lead declares a failover. At 03:25 the rule is met. There is no debate at 3 a.m., because the rule was written in daylight.',
+          'Before I move producers I stop MirrorMaker 2 and note the last copied offsets, so a half-alive source cannot write. The heartbeat shows the last copied record was written at 03:19:58. Anything later on the main cluster is the possible loss, well inside 1 minute.',
+          'Producers go to the standby. Consumers start from translated offsets, on the prefixed topics, and accept that some records repeat. They ignore repeats by event id.',
+          'At 06:00 the main region is healthy. I stay on the standby. I rebuild the old main as the new standby, let it catch up, and switch back in a planned window, or not at all. Records only the old main holds are compared and replayed by hand.'],
+      must: ['A decision rule written in advance, with a named decider', 'Stop the copy and record the last copied offsets', 'Consumers start from translated offsets and tolerate repeats', 'Do not rush back; rebuild the old site as the standby', 'State the possible loss against the agreed limit'] },
+    { id: 'q10d', m: 10, k: 'design', d: 3, t: 8, s: 'staff',
+      q: 'You join a payments company. 5,000 payments each second at peak, 40 services, one region with three zones, a second region available. Money must never be lost or counted twice. Analysts need 13 months of history. Write the one-page design for the event platform.',
+      a: ['Shape: a stretch cluster over three zones, with brokers in multiples of three, broker.rack, and three dedicated controllers, one in each zone. An asynchronous copy of critical topics to the second region with MirrorMaker 2 and offset translation, for a region failure. The copy delay is the agreed possible loss.',
+          'Topics: 3 copies, minimum 2, unclean election off, automatic creation off. Keys are the smallest thing that must stay in order, such as the payment id. Partition counts are calculated.',
+          'Producers: acks=all, idempotence, and an outbox from each service\'s database so a payment and its event cannot differ.',
+          'Consumers: at-least-once, handlers safe to repeat by event id, the new group protocol, dead-letter topics with owners.',
+          'Never twice: Kafka-to-Kafka totals use Kafka Streams with exactly_once_v2 and read_committed. Effects outside Kafka use a request id.',
+          'Contracts: a schema registry, FULL_TRANSITIVE on shared topics. History: 13 months in a warehouse fed by sink connectors, or tiered storage. Operations: quotas, access control, alerts, rolling changes, a failover practised every quarter.',
+          'Not Kafka: request and reply, the system of record for balances, large files.'],
+      must: ['Stretch cluster over three zones; dedicated controllers', 'Asynchronous copy to a second region; copy delay equals possible loss', 'acks=all, idempotence and an outbox', 'At-least-once consumers safe by event id; exactly-once only where Kafka ends', 'Schemas with compatibility; history outside broker disks', 'What Kafka is not used for'] },
+
+    // ---------- Module 11 ----------
+    { id: 'q11a', m: 11, k: 'concept', d: 1, t: 3, s: 'test',
+      q: 'Name the three layers of Kafka security and the question each answers. What errors does a new client meet, in order?',
+      a: ['Encryption asks: can anyone else read this? Authentication asks: who is this client? Authorization asks: may this user do this? The broker attaches a principal, such as User:alice, to a connection after authentication, and the access rules apply to that principal.',
+          'A new client usually meets three errors in one order, which is protocol, trust, permission. First an out-of-memory error, because the client defaults to PLAINTEXT against a TLS port. Then "SSL handshake failed", because the client has no truststore with the authority that signed the broker\'s certificate. Then "Authorization failed", which the broker\'s kafka-authorizer.log explains: principal, operation, resource.',
+          'A consumer needs rules for two resources: the topic and its consumer group.',
+          'The trade-off in all this is effort at the start for safety later. The concrete check is the authorizer log line for the denied request.'],
+      must: ['Encryption, authentication, authorization and their questions', 'Principal is the identity attached after authentication', 'Error order: out of memory, handshake failed, authorization failed', 'Truststore holds the signing authority', 'A consumer needs rules on the topic and the group'] },
+    { id: 'q11b', m: 11, k: 'tradeoff', d: 2, t: 3, s: 'staff',
+      q: 'Which authentication mechanism do you choose for a company cluster?',
+      a: ['I use what the company already runs for identity.',
+          'With a central identity provider: tokens, so users are created and removed in one place. With an internal certificate system for services: client certificates. With neither: SCRAM, where Kafka holds salted passwords and no password crosses the network.',
+          'I avoid PLAIN with passwords in configuration files outside a lab.',
+          'Whatever I choose, I decide how a credential is rotated before I issue the first one. That is my check: ask "how does this credential change, and who does it?" If nobody can answer, the design is not finished.'],
+      must: ['Match the company\'s existing identity system', 'Tokens, certificates or SCRAM, each with its fit', 'Avoid PLAIN passwords in files outside a lab', 'Decide credential rotation first'] },
+    { id: 'q11c', m: 11, k: 'incident', d: 1, t: 4, s: 'failures',
+      q: 'A new service crashes at start-up with java.lang.OutOfMemoryError: Java heap space. The team raised its memory twice and it still crashes. What do you do?',
+      a: ['I ask for the client\'s Kafka settings, in particular security.protocol. In the example there is none, so the client uses the default, PLAINTEXT, against a TLS port. Raising memory cannot fix that.',
+          'They add security.protocol=SASL_SSL and credentials. Now: "SSL handshake failed". I check that the client has a truststore with the authority that signed the broker\'s certificate. It had none.',
+          'With the truststore: "Authorization failed" on the first write. I read the authorizer log for the denied operation and resource. It shows the service\'s user denied WRITE on its topic. One producer rule later, it works.',
+          'To spare the next team these three hours: a client template with the three settings, a self-service way to get a user and rules, and a page that maps each error to its cause. The three errors in order are protocol, trust, permission.'],
+      must: ['Ask for security.protocol first', 'Handshake failure means check the truststore', 'Authorization failure means read the authorizer log and add the rule', 'Know the order: protocol, trust, permission', 'Prevention: client template and self-service path'] },
+    { id: 'q11d', m: 11, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'Design the security model for a cluster shared by 30 teams and 200 services. The company has an identity provider and runs services in containers. Cover listeners, authentication, permissions, rotation and detecting misuse.',
+      a: ['Listeners: one SASL_SSL listener for clients. A separate secured listener for traffic between brokers. A secured controller listener on a network only brokers and controllers can reach. No plain-text port anywhere.',
+          'Authentication: services use tokens from the identity provider, or certificates issued by the platform. People use the identity provider too, with short-lived credentials. No shared accounts, so every action has a name.',
+          'Permissions: each team owns a topic and group prefix, with one prefixed rule set per team, not a rule for each topic. Sharing a topic is an explicit rule approved by the owner. Rules live in version control and automation applies them. Only that automation is a super user.',
+          'Rotation: short-lived tokens rotate by themselves. Certificates are issued for weeks, not years, renewed automatically, with an alert well before expiry.',
+          'Detection: ship the authorizer log to the log platform. Alert on spikes of denials, on any super user use outside automation, and on topic deletions. Add quotas so a valid user cannot overload the cluster.'],
+      must: ['SASL_SSL client listener; secured inter-broker and controller listeners', 'Identity-provider-based authentication; no shared accounts', 'Prefix-based rules, in version control, applied by automation', 'Rotation plan with short lifetimes', 'Detection: authorizer log alerts; quotas'] },
+
+    // ---------- Module 12 ----------
+    { id: 'q12a', m: 12, k: 'concept', d: 1, t: 3, s: 'test',
+      q: 'Name the three levels of monitoring signal and the response to each. How do you measure consumer lag?',
+      a: ['Availability lost: page a person. Redundancy lost: open a ticket and act within hours. Capacity shrinking: open a ticket and act within days.',
+          'Examples: offline partitions above 0 is availability. Under-replicated partitions above 0 is redundancy. A disk that fills in a week is capacity.',
+          'Lag comes from the partition\'s end offset minus the group\'s committed offset, read by a tool or an exporter. But I measure it in time, not in records: how old is the oldest record the group has not processed? Record counts mean different things on a busy and a quiet topic. I compare the time with what the business accepts and with the topic\'s retention, because lag beyond retention is data loss.',
+          'I also alert when a partition\'s committed offset has not moved while its end offset has. That catches a stuck consumer before the backlog is large.'],
+      must: ['Three levels with their responses: page, hours, days', 'Lag is end offset minus committed offset', 'Measure lag in time, not records', 'Compare lag time with business limits and retention', 'Alert on a stuck offset'] },
+    { id: 'q12b', m: 12, k: 'tradeoff', d: 2, t: 3, s: 'staff',
+      q: 'Should a disk alert fire on a level, such as 85% full, or on predicted time to full?',
+      a: ['Predicted time to full, with a simple level alert kept as a backstop.',
+          'A level alone misleads both ways. A disk at 70% that grows 5% each hour is urgent. A disk at 85% that has been flat for a month is not. The prediction uses the growth rate over the last hours.',
+          'The cost: a prediction needs enough history, and a sudden burst can be missed, so the level alert catches what the prediction does not.',
+          'For paging, I use "disk predicted to fill within a day" as one of five night-time alerts. Disk above 60% and predicted to fill within a week is a ticket.'],
+      must: ['Recommend predicted time to full', 'Show both failure cases of a level alert (70% growing, 85% flat)', 'Keep a level alert as a backstop', 'Page on a short horizon; ticket on a long one'] },
+    { id: 'q12c', m: 12, k: 'incident', d: 2, t: 4, s: 'failures',
+      q: 'You are halfway through a rolling upgrade. Consumer lag panels on every dashboard say "no data". Teams ask if their consumers are dead. What do you do?',
+      a: ['I check the consumers themselves with kafka-consumer-groups.sh --describe, not the dashboards.',
+          'In the example every group has members and small lag. The consumers are fine. The monitoring broke. The exporter\'s log repeats "Cannot get consumer group" while its other metrics work. So the exporter cannot make its group request against the new brokers: a compatibility problem in the monitoring tool. The same happened in the lab with Kafka 4.3.',
+          'I am blind on lag for the rest of the upgrade. I pause, set up a temporary check from the command-line tool for the critical groups, for example a small script that runs the describe command each minute and alerts on its output, and then continue.',
+          'For the next upgrade: test the whole monitoring stack against the new version first, and add an alert for missing metrics, so "no data" is itself an alert.'],
+      must: ['Check the consumers with the command-line tool first', 'Conclude the monitoring broke, not the consumers', 'Temporary lag check before continuing', 'Test the monitoring stack on the new version in advance', 'Alert on missing metrics'] },
+    { id: 'q12d', m: 12, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'You take over 12 brokers and 3 controllers with almost no monitoring: one dashboard of traffic graphs. Write the plan: signals, alerts and severity, what teams see, and how you prove the alerts work.',
+      a: ['Page level (availability): offline partitions above 0. The sum of active controllers not equal to 1. Partitions below the in-sync minimum above 0 on critical topics. A disk predicted to fill within 12 hours. Lag in time beyond the limit for each critical consumer.',
+          'Ticket level (redundancy and capacity): under-replicated partitions above 0 for 15 minutes; a broker missing; a fenced broker; in-sync set shrinking with no broker down; request thread idle share below 30%; disk above 60% and predicted to fill within a week; quorum leader epoch rising; certificates expiring within 30 days.',
+          'Aggregation: per-broker metrics are summed over brokers before they are compared with a threshold. A broker counts only the partitions it leads.',
+          'For teams: a dashboard of their own lag in time, produce errors and latency, topic size and quota use.',
+          'Proof: a game day each quarter on a test cluster. Stop a broker, stop two, fill a disk, stop the controllers, stall a consumer. Each alert must fire with the right severity. Also alert when an expected metric is absent.',
+          'Fallback: keep the command-line health checks and the lag command in the runbook.'],
+      must: ['Page-level alerts: offline, active controllers, below minimum, disk prediction, lag in time', 'Ticket-level alerts for redundancy and capacity', 'Sum per-broker metrics before thresholds', 'Team dashboards of what they can change', 'Prove alerts by causing each fault', 'Command-line fallback and an alert on missing metrics'] },
+
+    // ---------- Extra questions ----------
+    { id: 'q01e', m: 1, k: 'tradeoff', d: 2, t: 4, s: 'staff',
+      q: 'How do you choose the partition count for a new topic?',
+      a: ['I take the larger of two numbers and add room for growth.',
+          'The first number is for throughput: the target rate divided by what one partition handles on the slowest side, usually the consumer. The second is for parallel consumers, because one partition is read by at most one consumer in a group. I add room for growth because changing the count later breaks key ordering. For example, 12,000 events each second at 1,000 per consumer instance gives 12, and I would choose 24 or 36.',
+          'The cost of more partitions: more files, more memory for indexes, slower recovery after a broker failure, and more small batches at the producer. A count in the tens is normal. A count in the thousands for one topic needs a reason.',
+          'The concrete check: measure what one consumer instance processes before choosing. Most requests for hundreds of partitions come from a guess.'],
+      must: ['Throughput number: rate divided by the slowest side', 'Consumer parallelism number; take the larger', 'Room for growth, because changing the count breaks key ordering', 'Costs of many partitions', 'Measure real consumer speed'] },
+    { id: 'q09e', m: 9, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'Your company wants one shared Kafka platform for 30 product teams. In the past, one team\'s runaway producer filled disks, and a replay slowed every broker. Design the rules and controls that make sharing safe. What stays off the shared cluster?',
+      a: ['Identity: every application authenticates as its own user and sets a client id. Without identity, nothing below can be enforced or traced.',
+          'Access: rules by team prefix. A team reads and writes only topics under its prefix, plus topics explicitly shared with it.',
+          'Quotas: default produce and fetch quotas for every user, raised on request. A request-time quota so one client cannot saturate broker threads. A quota on bulk replays in particular.',
+          'Topics: automatic creation off. Topics come through a reviewed request that enforces 3 copies, a minimum of 2, a stated retention with a size limit, a named owner and a justified partition count. A cap on partitions for each team.',
+          'Contracts: a schema for every shared topic, checked before release.',
+          'Visibility: dashboards per team of lag in time, errors and disk used.',
+          'Off the shared cluster: flows whose failure is a company emergency, such as payments, which get a cluster with stricter change control; very different workloads such as huge batch loads; regulated data that needs separate access rules.'],
+      must: ['Per-application identity and client id', 'Prefix-based access rules', 'Default quotas, including one for replays', 'Reviewed topic creation with standards and a partition cap', 'Schemas and per-team visibility', 'What does not belong on the shared cluster'] },
+    { id: 'q10e', m: 10, k: 'tradeoff', d: 2, t: 4, s: 'staff',
+      q: 'A team wants a job queue and already runs Kafka. Share groups, or a dedicated message queue product?',
+      a: ['Share groups, if the jobs are produced from data already in Kafka. If the team needs queue-native features, a dedicated queue.',
+          'The gains of share groups: one platform, one security model, and the same records can also be read as a log by other applications. A share group lets several members read the same partition, with each record acknowledged alone.',
+          'The costs: a share group gives up order. A record whose lock runs out becomes available again for another member, until the delivery limit, 5 by default.',
+          'A dedicated queue is better when you need priorities, a delay for each message, routing by content, a built-in dead-letter queue, or strict order within a group of messages together with many competing workers. I also check the maturity of share groups in the team\'s client language.',
+          'My check: list which of those queue features the team really needs. If none, share groups.'],
+      must: ['Recommendation tied to where the data lives', 'Several members share a partition; per-record acknowledgement', 'Gives up order; lock timeout and delivery limit of 5', 'Queue-native features: priorities, delays, routing, built-in dead-letter queue', 'Check client-language maturity'] },
+    // ---------- Experience and scale (ids x01 to x24; field g is the group) ----------
+    // Group e1: Tell me about an incident you handled
+    { id: 'x01', g: 'e1', m: 9, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'Tell me about a time a broker disk filled up. What did you do?',
+      a: [`I have not handled this in production. In the lab I found where the space went and freed it the supported way. I did not fill a real disk, because the labs give no command for that step.`,
+          `First I measure. kafka-log-dirs.sh lists the size of each partition, so I find the largest topics. In the lab the three perf partitions held about 730 MB. Then I check how far behind the consumers of that topic are, because lag beyond retention is data loss (module 12).`,
+          `Then I make the smallest change: lower retention.ms on that one topic. I wait up to 6 minutes. That is 1 minute of retention plus the 5-minute retention check. In the lab the old segment files were marked .deleted first.`,
+          `I never delete segment files by hand. Afterwards I add alerts at 60% and 75% full, and retention.bytes as a limit on topics that can grow without bound.`],
+      must: ['Honest framing: lab only, no real disk filled', 'Measure first with kafka-log-dirs.sh', 'Small topic-level retention change, after checking consumer lag', 'Wait for the 5-minute check', 'Never delete files by hand', 'Follow-up: alerts at 60% and 75%, retention.bytes'] },
+    { id: 'x02', g: 'e1', m: 3, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'Tell me about a time one partition got stuck because of a bad record. How did you find it and fix it?',
+      a: [`I have not handled this in production. The lab has no consumer with code in it, so I did not crash one on a bad record. The nearest real case is a sink connector in module 08: the task showed FAILED, the connector still showed RUNNING, and nothing was delivered.`,
+          `A poison record is one that always fails. The signs are lag that grows on one partition only, and a committed offset that does not move. I compare the committed offset with the end offset for each partition.`,
+          `The fix in code is to catch the error, send the record to a dead-letter topic, commit and continue. In an emergency I can skip it. The group must have no active members first. I use kafka-consumer-groups.sh with --reset-offsets and --dry-run first. I write down the skipped offset, because someone will ask for that record later.`,
+          `The skip step with a positive --shift-by was not run in the labs. ${UNV} I would also alert on time since the last commit.`],
+      must: ['Honest framing: no consumer crash was run in the lab', 'Signs: lag on one partition, committed offset not moving', 'Real fix: dead-letter topic, then commit and continue', 'Emergency skip: stop the group, --dry-run, record the skipped offset', 'Who must agree to lose that record', 'Alert on time since the last commit'] },
+    { id: 'x03', g: 'e1', m: 6, k: 'incident', d: 3, t: 5, s: 'failures',
+      q: 'Tell me about a hanging transaction that blocked readers. What did you see and what did you do?',
+      a: [`I have not handled this in production. In the lab I killed a transactional producer in the middle of a transaction with kill -9.`,
+          `The signs: lag grows for read_committed consumers while read_uncommitted consumers keep up. In the lab one reader saw 68 records and the other saw 30. kafka-transactions.sh describe showed the state Ongoing. A committed reader stops at the first record of the open transaction. Records that other producers write later wait behind it.`,
+          `Nothing ends it except time. The coordinator aborted it after transaction.timeout.ms. With a 40-second timeout the state became CompleteAbort about 45 seconds after the start: the timeout plus the coordinator's 10-second check. The default timeout is 1 minute. A restart with the same transactional id aborts it at once.`,
+          `My changes: a timeout as low as processing allows, stable transactional ids, and an alert on read_committed lag.`],
+      must: ['Honest framing: lab with kill -9, not production', 'Signs: committed lag grows, describe shows Ongoing', 'Committed readers stop at the first open record, also behind other producers', 'Ends by timeout (40 s plus 10 s check in the lab; default 1 minute) or a restart with the same id', 'Lower timeout, stable ids, alert on committed lag'] },
+    { id: 'x04', g: 'e1', m: 5, k: 'incident', d: 3, t: 6, s: 'staff',
+      q: 'Tell me about an upgrade that failed or stopped half-way. What would you do?',
+      a: [`I have not run a Kafka upgrade, in production or in the lab. I can say how I would avoid a half-done one, and what I would do if it happened.`,
+          `The method: read the upgrade notes first. Upgrade one server at a time. Check that no partition is under-replicated before each restart, and wait until the broker has rejoined every in-sync set. Restarting the next broker too early leaves two brokers down, and writes stop for partitions on both (module 09).`,
+          `Controllers go first and the active controller last. Then the brokers. Raise metadata.version as a separate, final step. Until then you can still roll back the software, so a half-done upgrade is recoverable. Treat the version step as the point of no return. ${UNV} The order and the downgrade limits are from memory in module 05.`,
+          `Also test the monitoring tools first. In module 12 the lab exporter lost its consumer-group metrics on Kafka 4.3.`],
+      must: ['Honest framing: no upgrade was run', 'One server at a time with a zero under-replicated check before each', 'Do not restart the next broker before the last one rejoined', 'Raise metadata.version last; software rollback is possible before it', 'Test monitoring against the new version'] },
+    // Group e2: What went wrong the first time
+    { id: 'x05', g: 'e2', m: 4, k: 'incident', d: 2, t: 5, s: 'failures',
+      q: 'What went wrong the first time you set durability? A team used acks=1, or acks=all with min.insync.replicas=1, and lost data.',
+      a: [`I have not seen this in production. I can describe both cases from the lab and the modules.`,
+          `With acks=1 the leader answers before any follower copies the record. If the leader then fails, the new leader never had it. The producer was told success (module 02).`,
+          `With acks=all and the default min.insync.replicas of 1, acks=all can mean one broker. In the lab I made a topic with a minimum of 1 and forced an unclean election. The end offset went back from 20 to 10, and the broker logged "Truncating risky2-0 to offset 10 below high watermark 20". Records 11 to 20 were gone.`,
+          `The fix is a set: 3 copies, min.insync.replicas=2, acks=all, unclean election off. The cost: with a minimum of 3, one stopped broker blocks writes. Replay the lost records from the source of truth. Kafka cannot give them back.`],
+      must: ['Honest framing: from the lab, not production', 'acks=1: success reported before any follower has the record', 'Minimum of 1 means acks=all can be one broker', 'Lab evidence: end offset 20 back to 10 after an unclean election', 'Fix: 3 copies, minimum 2, acks=all, unclean election off', 'Replay from the source of truth'] },
+    { id: 'x06', g: 'e2', m: 2, k: 'incident', d: 2, t: 4, s: 'failures',
+      q: 'What went wrong the first time with partition keys? One partition is far busier than the others.',
+      a: [`I have not seen this in production. The module has a worked example: a shipment topic keyed by customer id, with 12 partitions. One partition received 62% of the records. That number is from the example, not from my own measurement.`,
+          `First I measure: the end offsets of each partition. Then I sample the busy partition and find the key. In the example, one large retailer sent half of all shipments.`,
+          `More partitions do not help. A key maps to one partition, so that customer stays in exactly one of them. The question is what must stay in order. Here it was each shipment, not each customer. So key by shipment id.`,
+          `The cost is the migration. A new key changes where records go, and order is lost across the switch. Make a new topic, move the producers, let consumers finish the old topic, then switch them. In the lab, the partition of a key depended only on the key and the partition count.`],
+      must: ['Honest framing: worked example, not own measurement', 'Measure the end offset of each partition, then find the key', 'More partitions do not move one key', 'Key by the smallest thing that must stay in order', 'Migration cost: new topic, order lost across the switch'] },
+    { id: 'x07', g: 'e2', m: 3, k: 'incident', d: 2, t: 4, s: 'failures',
+      q: 'What went wrong the first time with consumer settings? The group rebalances every few minutes and records repeat.',
+      a: [`I have not seen this in production. The module describes two causes, and I ran a clean-stop rebalance in the lab.`,
+          `Cause one: a batch takes longer than max.poll.interval.ms, which is 5 minutes by default. The member is removed, another member reads the same records, and the first one fails to commit. The sign is a commit error that says the group has rebalanced, plus repeated records.`,
+          `Cause two: a rolling deployment restarts members one after another. Each restart normally causes two rebalances.`,
+          `My fixes: lower max.poll.records (default 500) so a batch is always fast. Use the new group protocol, or CooperativeStickyAssignor, so only the needed partitions move. Set group.instance.id so that a restart faster than the session timeout causes no rebalance. Then make processing safe to repeat. The check is the rebalance count and the time without a full assignment.`],
+      must: ['Honest framing: not seen in production', 'Slow batch beyond max.poll.interval.ms removes the member', 'Rolling deployments cause two rebalances per restart', 'Lower max.poll.records', 'Cooperative or new protocol, and group.instance.id', 'Processing must be safe to repeat'] },
+    { id: 'x08', g: 'e2', m: 8, k: 'incident', d: 2, t: 4, s: 'failures',
+      q: 'What went wrong the first time a team renamed a field in an event, with no schema registry?',
+      a: [`I have not seen this in production. The module has an example, and the lab shows the safe version.`,
+          `In the example, cust_id became customerId. The events were JSON by convention. Twenty minutes after the release, six teams had failing consumers. Three threw errors. Two wrote a null customer. One assigned every order to customer 0, and found out a week later.`,
+          `The emergency fix was to release again and write both field names. Then two teams reprocessed twenty minutes of orders.`,
+          `The real fix is a registry with BACKWARD compatibility. A rename is "remove a field, add a field with no default", and the registry refuses it. In the lab it refused version 3 with READER_FIELD_MISSING_DEFAULT_VALUE. To rename safely: add the new field with a default, write both, move every consumer, then remove the old field. Run the registry's compatibility test call in the build pipeline.`],
+      must: ['Honest framing: module example, not production', 'Failures were different: errors, nulls, and a silent wrong value', 'Emergency fix: write both field names', 'A rename is remove plus add with no default, so the registry refuses it', 'Safe rename: add with default, write both, move readers, remove old', 'Compatibility test in the build pipeline'] },
+    // Group e3: Scale
+    { id: 'x09', g: 'e3', m: 5, k: 'tradeoff', d: 3, t: 5, s: 'staff',
+      q: 'Could one cluster hold 5,000 partitions? What limits the number of partitions?',
+      a: [`I have never run a cluster with 5,000 partitions. My lab cluster has three brokers and 79 partition records in its metadata log. So I will reason from the limits and say what I would test.`,
+          `Each partition is metadata that the controller holds in memory, writes records for, and sends to every broker. Each replica costs open files and memory on a broker. When a broker fails, the controller writes a change record for each partition it touched. The small lab cluster already wrote 1,533 change records for a handful of broker stops.`,
+          `KRaft raised the practical limit compared with ZooKeeper. But failover time and broker start time still grow with the count. I do not quote a published limit. Module 05 says to test with your own numbers.`,
+          `My test: build the target count on a test cluster. Then time a broker restart and a controller failover. The lab measured about 1 second for the controller with three nodes and few partitions. That is a baseline, not a prediction.`],
+      must: ['Honest framing: never ran this size', 'Costs: controller memory and change records, broker files and memory', 'Failover and broker start time grow with the count', 'KRaft raised the limit; do not trust a published number', 'Test plan: build the count, time a restart and a controller failover'] },
+    { id: 'x10', g: 'e3', m: 4, k: 'design', d: 3, t: 7, s: 'staff',
+      q: 'Design a Kafka cluster across three zones. One zone may fail with no lost record and writes must continue.',
+      a: [`I have not run a multi-zone cluster. My lab brokers show rack: null on one machine. This is the design from module 04, not an experience.`,
+          `Brokers: 6, two in each zone, with broker.rack set to the zone. Size so that four brokers can carry the load, because a zone loss removes a third of the capacity. Controllers: three dedicated ones, one in each zone.`,
+          `Topics: 3 copies, min.insync.replicas=2, acks=all, unclean election off. One zone lost leaves two in-sync copies, so writes continue and no acknowledged record is lost.`,
+          `The weak point is a zone failure during a rolling restart. Some partitions then have one in-sync copy, and their writes stop until the broker returns. Nothing is lost. For the most critical topics, use 5 copies with a minimum of 3, or pause restarts.`,
+          `The cost: every write goes to two other zones. Consumers can read in their own zone with client.rack. I measured only one broker failover, about 1 second. A zone loss was not tested. ${UNV}`],
+      must: ['Honest framing: design, not experience', '6 brokers, 2 per zone, broker.rack, capacity for a zone loss', 'Three dedicated controllers, one per zone', '3 copies, minimum 2, acks=all, unclean election off', 'Zone failure during a restart: writes stop, nothing lost', 'Cost: cross-zone writes; fetch from the local zone'] },
+    { id: 'x11', g: 'e3', m: 5, k: 'tradeoff', d: 2, t: 4, s: 'failures',
+      q: 'When would you stop running brokers and controllers in the same process? What are the controller limits?',
+      a: [`I would separate them for any real system. I have only run combined mode, because the lab needs fewer containers. I have not seen it fail under load, so what follows is from module 05.`,
+          `In combined mode, client traffic can slow a broker. Its controller part then misses fetch deadlines, and the quorum holds elections with no real failure. The sign is a leader epoch that rises often. The fix is three small controller-only servers. Even with separate roles, use three controllers, or five to survive two failures. Four survive one failure, the same as three.`,
+          `The controller also has a limit of its own: it writes a change record for each partition a failed broker touched. So partition count matters.`,
+          `My check: load a test cluster in combined mode and watch the quorum leader epoch with kafka-metadata-quorum.sh describe --status. The lab election took about 1 second with a 2-second fetch timeout. Under load I would only expect it to rise. ${UNV}`],
+      must: ['Honest framing: only combined mode in the lab', 'Load slows the controller part and causes needless elections', 'Sign: leader epoch rising', 'Three controllers, or five; even numbers add cost only', 'Partition count adds change records on failover'] },
+    { id: 'x12', g: 'e3', m: 14, k: 'tradeoff', d: 3, t: 5, s: 'staff',
+      q: 'How long does it take to rebuild a broker with a lot of data, and how does tiered storage change that?',
+      a: [`I have never rebuilt a broker with real data. I can give the arithmetic and say what I would measure.`,
+          `Rebuild time is roughly the data on the broker divided by the copy rate. Say 4 TB on a broker, with an assumed 100 MB each second. That is 40,000 seconds, about 11 hours. The 100 MB is my assumption, not a measurement. ${UNV} The module 09 sizing example also uses 4 TB disks.`,
+          `With tiered storage, data older than the local window is already in remote storage. So a new replica may need to copy only the local part. That is a saving only if local retention is much shorter than total retention. If they are close, there is none. The lab used one broker, so no replica was ever rebuilt. ${UNV}`,
+          `The plug-in is also outside Apache Kafka, and I tested one release only. My test: replace a broker on a test cluster, with and without tiering, and time both.`],
+      must: ['Honest framing: never rebuilt a broker', 'Estimate: data size divided by copy rate, with the rate named as an assumption', 'Tiering: only the local part may need copying', 'No saving when local retention is near total', 'Test plan: time a replacement with and without tiering'] },
+    // Group e4: Failover
+    { id: 'x13', g: 'e4', m: 4, k: 'concept', d: 1, t: 3, s: 'failures',
+      q: 'How long does a leader failover take? What did you measure?',
+      a: [`In the lab, a three-broker cluster on one laptop, broker 1 became leader of the partition about 1 second after I stopped broker 3. The stop was clean. I read the new leader and the leader epoch file. Clients usually log "not leader" errors for a moment, refresh metadata and continue (module 04).`,
+          `That number has limits. It is one clean stop, small data, no load, one machine. I did not time a kill, which sends no goodbye to the controller. For a hung or cut-off broker, the detection timers matter: the controller fences a broker after 9 seconds without a heartbeat. A follower leaves the in-sync set after 30 seconds without catching up. Both are defaults from the modules. Neither was timed in a kill test. ${UNV}`,
+          `So I say: about 1 second for a clean stop in the lab, and up to the 9-second fence for a silent failure, by the default. Then I would test a kill under load.`],
+      must: ['Measured value: about 1 second after a clean stop', 'Limits: clean stop, one laptop, no load', 'A kill was not timed', 'Detection timers: 9 seconds fence, 30 seconds in-sync', 'Next step: test a kill under load'] },
+    { id: 'x14', g: 'e4', m: 10, k: 'design', d: 2, t: 5, s: 'staff',
+      q: 'A whole region is lost. How do you talk about recovery? What are the two numbers?',
+      a: [`The two numbers are the recovery point and the recovery time. The recovery point is how much recent data you may lose. The recovery time is how long the service may be down. Every design trades these against cost and complexity.`,
+          `With MirrorMaker 2, the copy to the second cluster is asynchronous. So the recovery point is the copy delay. In the lab I measured about 2 seconds, with one record and a one-broker second cluster. With 4,000 records each second and a 3-second delay, about 12,000 acknowledged records are missing. If the delay grows to 5 minutes, it is 1,200,000. So I monitor the delay and alert on it.`,
+          `I have not run a region failover. The recovery time comes from a runbook I would have to rehearse. For zero loss, asynchronous copying is not enough. Use a stretch cluster, or keep the source of truth in a database that replicates synchronously and rebuild Kafka from it.`],
+      must: ['Define recovery point and recovery time', 'Asynchronous copy: recovery point equals the copy delay', 'Arithmetic: rate times delay (4,000 times 3 seconds)', 'Lab delay about 2 seconds; limits stated', 'Honest: no region failover run; rehearse the runbook', 'Zero loss needs another design'] },
+    { id: 'x15', g: 'e4', m: 10, k: 'incident', d: 3, t: 6, s: 'failures',
+      q: 'How would you rehearse a MirrorMaker failover? What about repeated records and aborted records?',
+      a: [`I ran the copy and read the offsets in the lab. I did not run the failover step itself. The labs show it only as clean-up. ${UNV}`,
+          `Repeats: a translated group offset is cautious. The group g-new had offset 1261 on the main cluster and 1112 on the copy. It would read 149 records again and miss none. So consumers must be safe to repeat. Also the topic name gets the prefix, for example main.events.`,
+          `Aborted records: the topic payments had 78 offsets on the source and 73 on the copy. Of the 73 data records, 38 belonged to an aborted transaction, and they were copied as ordinary records. The module's fix is the source consumer's isolation level set to read_committed. I did not rerun the lab with it. ${UNV}`,
+          `The rehearsal: stop the copy, point producers at the copy, start consumers from translated offsets, and record the last copied offsets. That gives the possible loss. Then rehearse the return too.`],
+      must: ['Honest framing: the failover step was not run', 'Translated offsets repeat records: 149 in the lab, none missed', 'Names have the prefix', 'Aborted records were copied as ordinary records (38 in the lab)', 'read_committed fix, marked as not rerun', 'Rehearse stop, switch, restart, and the way back'] },
+    { id: 'x16', g: 'e4', m: 14, k: 'tradeoff', d: 2, t: 4, s: 'failures',
+      q: 'What does it cost to read old data from remote storage? Did you measure it?',
+      a: [`I did not measure it. In the lab a console consumer read all 30,000 records from the beginning, and no local file held the old ones. The offsets were earliest 0 and earliest-local 30,000. I took no timing. The lab "remote" was a folder on the same machine, so any timing would mislead.`,
+          `What I expect is a slower read than local disk, and in a real object store a charge for each request. ${UNV} That is general knowledge, with no number from the lab.`,
+          `My recommendation: tiering pays off when most consumers read only recent data. Ask what share of reads go beyond the local window. If it is large, tiering moves cost and does not remove it.`,
+          `To measure: use a real object store. Replay a known range from remote and from local, compare the times, and count the requests billed. Protect the local disk from bulk replays with a fetch quota (module 09).`],
+      must: ['Honest: no timing was taken', 'Lab store was a local folder, so timing would mislead', 'Expect slower reads and per-request cost, marked as unverified', 'Ask what share of reads go beyond the local window', 'Test plan: real store, compare times, count requests'] },
+    // Group e5: How would you find out
+    { id: 'x17', g: 'e5', m: 14, k: 'design', d: 3, t: 5, s: 'failures',
+      q: 'What happens when the remote storage for tiered topics is down? How would you find out?',
+      a: [`I do not know, because it was not tested. I did not stop or break the remote folder in the lab, and I will not guess as if I had.`,
+          `The design suggests this: copies stop, so local disk grows. Reads of old data fail, while recent data still works. ${UNV} It is reasoning, not an observation.`,
+          `The questions to answer by experiment: Does the broker keep accepting writes? Does local disk fill because copies stop? Do reads of recent data still work? How long until the broker recovers after the store returns?`,
+          `My plan: on a test cluster with a real object store, make the store unreachable for a stated time. Watch disk growth, the copy errors in the broker log, and the errors consumers see. Then restore the store and time the recovery.`,
+          `The production answer: size local disk for an outage of a stated length, and alert on copy failures.`],
+      must: ['Say plainly: not tested', 'Separate expectation from observation', 'The four questions to answer by experiment', 'Test: make the store unreachable, watch disk, broker log, consumer errors', 'Size local disk for a stated outage; alert on copy failures'] },
+    { id: 'x18', g: 'e5', m: 7, k: 'design', d: 2, t: 5, s: 'staff',
+      q: 'A Kafka Streams application has 40 GB of state. How would you find out how it behaves when an instance restarts?',
+      a: [`I have not run a store of that size. In the lab I deleted a small state directory and restarted, and the counts came back from the changelog. That shows how it works, not how long it takes.`,
+          `The estimate from module 07: restoration time is roughly the changelog size divided by the read rate. At an assumed 50 MB each second, 40 GB is more than 13 minutes, with no processing for that task. The 50 MB is the module's example rate, not my measurement. ${UNV}`,
+          `So my recommendation: set state.dir on a durable disk, so a planned restart replays only the missing tail. Add one standby replica for a fast failover. With exactly-once, an unclean stop wipes the local store and restores it, which is slower.`,
+          `My test: build a 40 GB store on a test cluster. Kill an instance and time the restore. Measure the actual read rate. Repeat with a standby and with a kept disk.`],
+      must: ['Honest: only a tiny restore was run', 'Restoration is roughly changelog size divided by read rate', 'The 50 MB each second is an assumption; 40 GB is over 13 minutes', 'Durable state.dir and a standby replica', 'Exactly-once makes crash recovery slower', 'Test plan: build it, kill an instance, time it'] },
+    { id: 'x19', g: 'e5', m: 3, k: 'concept', d: 1, t: 3, s: 'failures',
+      q: 'How many partitions can one consumer group of N instances use? How would you check?',
+      a: [`A partition is read by one member of a group at a time. So with P partitions and N instances, at most the smaller of the two do work. The rest sit idle. The module's example: scaling from 6 to 12 instances on a 6-partition topic changes nothing.`,
+          `To check on a real group, I run kafka-consumer-groups.sh --describe --group G --members. The #PARTITIONS column shows how many each member owns. In the lab, two members of a 6-partition topic owned three each. After one stopped, the other owned all six.`,
+          `To plan, I divide the peak rate by what one instance handles. Module 09: 16,000 records each second at 5,000 for each instance needs 4 instances. So I fix the consumer speed before adding partitions, because partitions cannot be removed and keys move.`,
+          `A share group has no such limit, but it gives up order.`],
+      must: ['One member per partition, so usable members are the smaller of N and P', 'Extra instances sit idle (6 to 12 example)', 'Check with --describe --members and the #PARTITIONS column', 'Plan: peak rate divided by one instance rate', 'Share groups lift the limit but lose order'] },
+    { id: 'x20', g: 'e5', m: 12, k: 'design', d: 2, t: 4, s: 'failures',
+      q: 'How would you prove that an alert works before you trust it?',
+      a: [`I cause the fault and watch the alert fire. A rule that loads without error may never fire.`,
+          `In the lab I made that mistake. My first rules included a lag alert on a metric the exporter never published. Prometheus loaded it and it showed "inactive" for ever. The fix was to add an alert for an absent metric.`,
+          `The lab test: I stopped broker 3 and waited 50 seconds. KafkaBrokerDown and KafkaUnderReplicatedPartitions fired. KafkaPartitionBelowMinimum stayed quiet, which was correct, because every partition still had two in-sync copies. After I restarted the broker, nothing was firing.`,
+          `Limits: this was a lab with one broker stop. I tested no pager, no on-call routing and no real traffic. Also give each rule a for time longer than a normal restart, and test again after a Kafka upgrade, because the lab exporter lost its group metrics on 4.3.`],
+      must: ['Cause the fault; do not trust a loaded rule', 'The never-firing lag alert, and an absent-metric alert', 'Lab result: two alerts fired, the third correctly stayed quiet', 'Honest limits: no pager or routing tested', 'for time longer than a restart; retest after upgrades'] },
+    // Group e6: Honest limits
+    { id: 'x21', g: 'e6', m: 9, k: 'concept', d: 2, t: 4, s: 'staff',
+      q: 'The interviewer asks about a cluster size you have never run. How do you answer?',
+      a: [`I say what I have run, then reason from first principles, then name the test. I never pretend.`,
+          `For example: "I have run three brokers on one laptop. I have not run a cluster of that size. Here is how I would size it." Then I use the arithmetic. Module 09: 100 MB each second, 7 days, 3 copies is about 181 TB without compression. With 4 TB for each broker and 40% free disk, that is about 19 brokers by disk alone.`,
+          `Then I name what would break first: disk, the network after a broker fails (with N brokers each survivor carries N divided by N minus 1 of its load), the controller's change records, and partition count.`,
+          `Then I give the test: confirm the compression ratio on real data, and test one broker's limits on the real hardware. Published numbers from other hardware are only a starting point.`,
+          `This shows I know where the limits are, and that I check before I claim.`],
+      must: ['State what you have actually run', 'Reason from the sizing arithmetic', 'Name what breaks first (disk, network after a failure, controller, partitions)', 'Name the test you would run', 'Do not quote other people\'s numbers as your own'] },
+    { id: 'x22', g: 'e6', m: 9, k: 'tradeoff', d: 3, t: 5, s: 'lab',
+      q: 'You measured something on your laptop. How do you turn it into a claim that other engineers can trust?',
+      a: [`I state the setup, the number, and what the number cannot show. The module 09 quota test is my example.`,
+          `I limited slow-client to 5 MiB each second. It still averaged 21.64 MB each second, with 973 ms average latency, and fast-client with no quota got 39.03 MB each second at 422 ms. The test sent 80 MB in under 4 seconds. The broker measures over an 11-second window, so most of it was an allowed burst. Earlier runs of 6 MB and 20 MB showed no slowing at all.`,
+          `So the honest claim is: "A short test shows no throttle, because a burst fits in the window." It is not "quotas do not work".`,
+          `What I did not do: a run of a minute or more, with several repeats. ${UNV} The setup was also three containers on one machine, so disk and network were shared. My next step: lengthen the run until it lasts a minute, repeat it, and compare MB each second with the quota.`],
+      must: ['State the setup and the number', 'Explain why the test misled: 80 MB, under 4 seconds, 11-second window', 'Claim only what the data shows', 'Name what was not done: a long run and repeats', 'Containers share one machine'] },
+    { id: 'x23', g: 'e6', m: 4, k: 'concept', d: 1, t: 3, s: 'test',
+      q: 'What is the difference between replication and backup? Is Kafka replication a backup?',
+      a: [`No. Replication copies mistakes as faithfully as good data. A deleted topic is deleted on every replica. A backup must survive a wrong setting, a deleted topic and a bad deploy.`,
+          `The lab showed two cases. With tiered storage, shortening retention.ms emptied the remote folder, so the remote copy is not an archive. MirrorMaker 2 copied 38 aborted records as ordinary records, so a copy also repeats errors. A copy to a second cluster is also asynchronous, so it can lag.`,
+          `Replication protects against a broker failure. Each copy is only useful in its own job: replicas for availability, a second cluster for site loss.`,
+          `I have not built or tested a Kafka backup. ${UNV} What I would do is name the source of truth. Module 10 suggests keeping it in a database and treating Kafka as rebuildable from it. Then I would test the restore, because an untested backup is a hope.`],
+      must: ['Replication copies mistakes, deletes included', 'Backup must survive a wrong setting, a deleted topic, a bad deploy', 'Tiered storage and MirrorMaker are not backups (lab evidence)', 'Honest: no backup tool tested', 'Name the source of truth and test the restore'] },
+    { id: 'x24', g: 'e6', m: 14, k: 'concept', d: 1, t: 3, s: 'staff',
+      q: 'The interviewer asks: "Does tiered storage work with compacted topics?" You do not know. What do you say?',
+      a: [`I say it in four parts: what I know, what I do not know, what I would do, and how I would decide.`,
+          `"I know the basics. Tiered storage copies closed segments to remote storage, and the lab showed it with one broker and a folder. I do not know how it works with compacted topics. The lab used no compacted topic, and module 09 says to check it in your version.`,
+          `I would not guess. I would read the documentation for our Kafka version. Then I would test it on a test topic: turn on tiering, write keys with updates, let compaction run, and read from the beginning.`,
+          `Until I have checked, I would not put a compacted topic on tiered storage."`,
+          `Notice what the answer avoids. It does not bluff, and it does not stop at "I do not know". It shows the next step and a safe default. Module 14 uses the same shape for a remote outage: "I did not test it, and I will not pretend to."`],
+      must: ['Say what you do know', 'Say clearly what you do not know', 'Name the exact check: documentation, then a test', 'Give a safe default until checked', 'Do not bluff and do not stop at "I do not know"'] }
+  ];
+
+  // ---------------- storage ----------------
+  var KEY = 'kb-interview';
+  var mem = null;
+  function load() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) { var o = JSON.parse(raw); if (o && o.q) return o; }
+    } catch (e) {}
+    return mem || { q: {} };
+  }
+  function save() {
+    mem = store;
+    try { localStorage.setItem(KEY, JSON.stringify(store)); return true; } catch (e) { return false; }
+  }
+  var store = load();
+
+  // ---------------- helpers ----------------
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function byId(id) { for (var i = 0; i < BANK.length; i++) if (BANK[i].id === id) return BANK[i]; return null; }
+  function fmt(sec) { sec = Math.max(0, Math.ceil(sec)); var m = Math.floor(sec / 60), s = sec % 60; return m + ':' + (s < 10 ? '0' : '') + s; }
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function rec(id) { if (!store.q[id]) store.q[id] = { seen: 0, rating: 0, hits: [] }; return store.q[id]; }
+  function link(q) { return 'modules/' + MODS[q.m][0] + '.html#' + q.s; }
+  function scrollTo(el) { el.scrollIntoView({ behavior: KB.reducedMotion ? 'auto' : 'smooth', block: 'start' }); }
+
+  // ---------------- filters ----------------
+  function chips(container, items, name) {
+    var h = '';
+    items.forEach(function (it) {
+      h += '<label class="chip"><input type="checkbox" name="' + name + '" value="' + it[0] + '" checked> ' + esc(it[1]) + '</label>';
+    });
+    container.innerHTML = h;
+    container.addEventListener('change', updatePool);
+  }
+  chips($('f-kind'), Object.keys(KINDS).map(function (k) { return [k, KINDS[k]]; }), 'kind');
+  chips($('f-grp'), Object.keys(GROUPS).map(function (g) { return [g, GROUPS[g]]; }), 'grp');
+  chips($('f-mod'), Object.keys(MODS).map(function (m) { return [m, m + ' ' + MODS[m][1]]; }), 'mod');
+  chips($('f-diff'), [[1, '1'], [2, '2'], [3, '3']], 'diff');
+
+  function checked(name) {
+    var out = {};
+    var els = document.querySelectorAll('input[name="' + name + '"]:checked');
+    for (var i = 0; i < els.length; i++) out[els[i].value] = true;
+    return out;
+  }
+  function pool() {
+    var k = checked('kind'), m = checked('mod'), d = checked('diff'), g = checked('grp');
+    return BANK.filter(function (q) { return k[q.k] && m[q.m] && d[q.d] && g[grp(q)]; });
+  }
+  function updatePool() {
+    var p = pool();
+    $('pool-info').textContent = p.length + ' of ' + BANK.length + ' questions match.';
+  }
+  function setAllMods(v) {
+    var els = document.querySelectorAll('input[name="mod"]');
+    for (var i = 0; i < els.length; i++) els[i].checked = v;
+    updatePool();
+  }
+  $('mod-all').addEventListener('click', function () { setAllMods(true); });
+  $('mod-none').addEventListener('click', function () { setAllMods(false); });
+
+  // ---------------- question timer ----------------
+  var T = { total: 0, left: 0, endAt: 0, h: null, running: false };
+  function tShow() { var el = $('timer'); el.textContent = fmt(T.left / 1000); el.classList.toggle('up', T.left <= 0); }
+  function tStop() { if (T.h) { clearInterval(T.h); T.h = null; } T.running = false; }
+  function tTick() {
+    T.left = T.endAt - Date.now();
+    if (T.left <= 0) {
+      T.left = 0; tStop(); tShow();
+      $('t-msg').textContent = 'Time. Finish your sentence.';
+      return;
+    }
+    tShow();
+  }
+  function tStart() {
+    if (T.running || !cur) return;
+    if (T.left <= 0) T.left = T.total;
+    T.endAt = Date.now() + T.left; T.running = true;
+    T.h = setInterval(tTick, 250);
+    $('t-msg').textContent = 'Speaking. Say the recommendation first, then the trade-off, then a number.';
+    tTick();
+  }
+  function tPause() {
+    if (!T.running) return;
+    T.left = T.endAt - Date.now(); tStop(); tShow();
+    $('t-msg').textContent = 'Paused.';
+  }
+  function tReset() {
+    tStop(); T.left = T.total; tShow();
+    $('t-msg').textContent = 'Reset. Press Start when you begin to speak.';
+  }
+  $('t-start').addEventListener('click', tStart);
+  $('t-pause').addEventListener('click', tPause);
+  $('t-reset').addEventListener('click', tReset);
+
+  // ---------------- question card ----------------
+  var cur = null;
+  var used = {};
+  function showQuestion(q, focus) {
+    cur = q;
+    rec(q.id).seen = (rec(q.id).seen || 0) + 1;
+    save();
+    $('qcard').hidden = false;
+    $('summary').hidden = true;
+    $('qmeta').innerHTML = '<span>' + q.id + '</span><span>Module ' + q.m + ' ' + esc(MODS[q.m][1]) + '</span><span>' + KINDS[q.k] + '</span>' + (q.g ? '<span>' + esc(GROUPS[q.g]) + '</span>' : '') + '<span>Difficulty ' + q.d + '</span><span>' + q.t + ' min</span>';
+    $('qtext').textContent = q.q;
+    T.total = q.t * 60 * 1000; tStop(); T.left = T.total; tShow();
+    $('t-msg').textContent = 'Think first. Answer aloud. Press Start when you begin to speak.';
+    $('ans').hidden = true;
+    $('show-ans').hidden = false;
+    $('save-msg').textContent = '';
+    renderResults();
+    if (focus) { scrollTo($('qcard')); $('qtext').focus({ preventScroll: true }); }
+  }
+  function revealAnswer() {
+    if (!cur) return;
+    var q = cur, r = rec(q.id);
+    $('ans-body').innerHTML = q.a.map(function (p) { return '<p>' + p + '</p>'; }).join('');
+    $('ans-link').innerHTML = 'Read more: <a href="' + link(q) + '">module ' + q.m + ', ' + esc(MODS[q.m][1]) + '</a>';
+    var h = '';
+    q.must.forEach(function (m, i) {
+      var on = r.hits && r.hits.indexOf(i) >= 0;
+      h += '<label class="rubric"><input type="checkbox" data-i="' + i + '"' + (on ? ' checked' : '') + '><span>' + esc(m) + '</span></label>';
+    });
+    $('rubric').innerHTML = h;
+    syncRating();
+    $('ans').hidden = false;
+    $('show-ans').hidden = true;
+  }
+  function syncRating() {
+    var r = cur ? rec(cur.id).rating : 0;
+    var bs = $('rate').querySelectorAll('button');
+    for (var i = 0; i < bs.length; i++) bs[i].setAttribute('aria-pressed', String(Number(bs[i].dataset.r) === r));
+  }
+  $('show-ans').addEventListener('click', revealAnswer);
+  $('rubric').addEventListener('change', function () {
+    if (!cur) return;
+    var boxes = $('rubric').querySelectorAll('input'), hits = [];
+    for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) hits.push(i);
+    rec(cur.id).hits = hits;
+    persist();
+  });
+  $('rate').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b || !cur) return;
+    rec(cur.id).rating = Number(b.dataset.r);
+    syncRating(); persist();
+  });
+  function persist() {
+    var ok = save();
+    $('save-msg').textContent = ok ? 'Saved.' : 'Could not save to this browser. The score lasts for this page only.';
+    renderResults();
+  }
+
+  // ---------------- draw ----------------
+  function draw() {
+    if (loop) { $('pool-info').textContent = 'Finish or cancel the mock loop first.'; return; }
+    var p = pool();
+    if (!p.length) { $('pool-info').textContent = 'No question matches. Choose at least one kind, group, module and difficulty.'; return; }
+    var avail = p.filter(function (q) { return !used[q.id]; });
+    var note = '';
+    if (!avail.length) {
+      p.forEach(function (q) { delete used[q.id]; });
+      avail = p; note = ' All matching questions were used, so the set starts again.';
+    }
+    var q = pick(avail);
+    used[q.id] = true;
+    var left = p.filter(function (x) { return !used[x.id]; }).length;
+    $('pool-info').textContent = p.length + ' questions match. ' + left + ' not yet drawn.' + note;
+    showQuestion(q, true);
+  }
+  $('draw').addEventListener('click', draw);
+
+  // ---------------- mock loop ----------------
+  var loop = null;
+  var LOOP_MS = 45 * 60 * 1000;
+  function ofKind(k, not) { return BANK.filter(function (q) { return k.indexOf(q.k) >= 0 && not.indexOf(q.id) < 0; }); }
+  function startLoop() {
+    var ids = [];
+    ['concept', 'tradeoff', 'incident'].forEach(function (k) { ids.push(pick(ofKind([k], ids)).id); });
+    ids.push(pick(ofKind(['design', 'incident'], ids)).id);
+    ids.push(pick(ofKind(['design', 'incident'], ids)).id);
+    loop = { ids: ids, i: 0, endAt: Date.now() + LOOP_MS, left: LOOP_MS, h: null, over: false, startAt: Date.now() };
+    $('loop-panel').hidden = false;
+    $('loop-msg').textContent = 'The total timer is running. It does not pause.';
+    loop.h = setInterval(loopTick, 500);
+    loopTick();
+    loopShow();
+  }
+  function loopTick() {
+    if (!loop) return;
+    loop.left = loop.endAt - Date.now();
+    if (loop.left <= 0) {
+      loop.left = 0; loop.over = true; clearInterval(loop.h); loop.h = null;
+      $('loop-msg').textContent = 'Time. Finish your sentence. Then press the button to see your summary.';
+      $('loop-next').textContent = 'Show summary';
+    }
+    $('loop-timer').textContent = fmt(loop.left / 1000);
+  }
+  function loopShow() {
+    var q = byId(loop.ids[loop.i]);
+    $('loop-pos').textContent = 'Question ' + (loop.i + 1) + ' of 5';
+    if (!loop.over) $('loop-next').textContent = loop.i === 4 ? 'Finish and show summary' : 'Next question';
+    showQuestion(q, true);
+  }
+  function loopNext() {
+    if (!loop) return;
+    if (loop.over || loop.i >= 4) { loopSummary(); return; }
+    loop.i++; loopShow();
+  }
+  function loopEnd() {
+    if (loop && loop.h) clearInterval(loop.h);
+    var l = loop; loop = null;
+    $('loop-panel').hidden = true;
+    return l;
+  }
+  function loopSummary() {
+    tStop();
+    var l = loopEnd();
+    var elapsed = Math.min(LOOP_MS, Date.now() - l.startAt);
+    var sum = 0, n = 0, h = '<p>Time used: <b>' + fmt(elapsed / 1000) + '</b> of 45:00.</p><div class="table-wrap"><table class="res"><thead><tr><th>#</th><th>Question</th><th>Kind</th><th>Rubric</th><th>Rating</th></tr></thead><tbody>';
+    l.ids.forEach(function (id, i) {
+      var q = byId(id), r = rec(id);
+      if (r.rating) { sum += r.rating; n++; }
+      h += '<tr><td>' + (i + 1) + '</td><td><a href="#q=' + id + '">' + esc(q.q.length > 80 ? q.q.slice(0, 77) + '...' : q.q) + '</a></td><td>' + KINDS[q.k] + '</td><td>' + (r.hits ? r.hits.length : 0) + ' of ' + q.must.length + '</td><td>' + (r.rating ? r.rating + ' of 3' : 'not scored') + '</td></tr>';
+    });
+    h += '</tbody></table></div><p>' + (n ? 'Average rating: <b>' + (sum / n).toFixed(1) + '</b> of 3 over ' + n + ' scored question' + (n === 1 ? '' : 's') + '.' : 'You did not score any question. Open each one and score it to see an average.') + ' Ratings and ticks you gave were saved with each question.</p><p class="small">Questions you rated 1 appear in "Five weakest questions" below.</p>';
+    $('summary-body').innerHTML = h;
+    $('summary').hidden = false;
+    $('qcard').hidden = true;
+    renderResults();
+    scrollTo($('summary'));
+  }
+  $('loop-start').addEventListener('click', function () { if (loop) { loopEnd(); } startLoop(); });
+  $('loop-next').addEventListener('click', loopNext);
+  $('loop-cancel').addEventListener('click', function () {
+    if (!loop) return;
+    loopEnd(); $('qcard').hidden = true; tStop();
+    $('pool-info').textContent = 'Mock loop cancelled.';
+  });
+
+  // ---------------- results ----------------
+  function agg(keyFn) {
+    var o = {};
+    BANK.forEach(function (q) {
+      var r = store.q[q.id];
+      var k = keyFn(q);
+      if (!o[k]) o[k] = { n: 0, sum: 0, hit: 0, tot: 0 };
+      if (r && r.rating) {
+        o[k].n++; o[k].sum += r.rating;
+        o[k].hit += (r.hits || []).length; o[k].tot += q.must.length;
+      }
+    });
+    return o;
+  }
+  function tbl(el, o, labelFn, keys) {
+    var h = '<thead><tr><th scope="col">Group</th><th scope="col">Rated</th><th scope="col">Average rating</th><th scope="col">Rubric points</th></tr></thead><tbody>';
+    keys.forEach(function (k) {
+      var a = o[k];
+      h += '<tr><th scope="row">' + esc(labelFn(k)) + '</th><td>' + a.n + '</td><td>' + (a.n ? (a.sum / a.n).toFixed(1) : '-') + '</td><td>' + (a.tot ? Math.round(100 * a.hit / a.tot) + '%' : '-') + '</td></tr>';
+    });
+    el.innerHTML = h + '</tbody>';
+  }
+  function renderResults() {
+    var seen = 0, rated = 0, sum = 0;
+    BANK.forEach(function (q) {
+      var r = store.q[q.id];
+      if (r && r.seen) seen++;
+      if (r && r.rating) { rated++; sum += r.rating; }
+    });
+    $('stats').innerHTML =
+      '<div class="stat"><b>' + seen + ' / ' + BANK.length + '</b><span>questions seen</span></div>' +
+      '<div class="stat"><b>' + rated + '</b><span>questions rated</span></div>' +
+      '<div class="stat"><b>' + (rated ? (sum / rated).toFixed(1) : '-') + '</b><span>average rating of 3</span></div>';
+    tbl($('by-kind'), agg(function (q) { return q.k; }), function (k) { return KINDS[k]; }, Object.keys(KINDS));
+    tbl($('by-grp'), agg(grp), function (k) { return GROUPS[k]; }, Object.keys(GROUPS));
+    tbl($('by-mod'), agg(function (q) { return q.m; }), function (k) { return k + ' ' + MODS[k][1]; }, Object.keys(MODS));
+    var rows = [];
+    BANK.forEach(function (q) {
+      var r = store.q[q.id];
+      if (r && r.rating) rows.push({ q: q, r: r, cov: (r.hits || []).length / q.must.length });
+    });
+    rows.sort(function (a, b) { return (a.r.rating - b.r.rating) || (a.cov - b.cov); });
+    rows = rows.slice(0, 5);
+    if (!rows.length) { $('weak').innerHTML = '<p class="small">Rate some questions and the weakest five appear here.</p>'; return; }
+    var h = '<ol>';
+    rows.forEach(function (x) {
+      h += '<li><a href="#q=' + x.q.id + '">Retry: ' + esc(x.q.q.length > 90 ? x.q.q.slice(0, 87) + '...' : x.q.q) + '</a> <span class="small">(' + KINDS[x.q.k] + ', module ' + x.q.m + ', rating ' + x.r.rating + ', rubric ' + x.r.hits.length + ' of ' + x.q.must.length + ')</span></li>';
+    });
+    $('weak').innerHTML = h + '</ol>';
+  }
+
+  // ---------------- retry links ----------------
+  function fromHash() {
+    var m = /^#q=(q\d+[a-z]|x\d+)$/.exec(location.hash);
+    if (!m) return;
+    var q = byId(m[1]);
+    if (!q) return;
+    if (loop) { var l = loop; if (!l.over && l.ids.indexOf(q.id) < 0) { $('loop-msg').textContent = 'Finish or cancel the mock loop before you retry another question.'; return; } }
+    $('summary').hidden = true;
+    showQuestion(q, true);
+  }
+  window.addEventListener('hashchange', fromHash);
+
+  // ---------------- reset ----------------
+  $('reset-all').addEventListener('click', function () {
+    if (!window.confirm('Delete all your ratings and ticks for the mock interview? This cannot be undone.')) return;
+    store = { q: {} }; used = {};
+    save();
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    mem = null;
+    if (cur) { cur = null; tStop(); $('qcard').hidden = true; }
+    renderResults();
+  });
+
+  updatePool();
+  renderResults();
+  fromHash();
+})();
+</script>
+<script src="assets/kb.js"></script>
+</body>
+</html>

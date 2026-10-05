@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13 Change data capture lab · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/kb.css">
+<style>
+  .rec { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .6rem; margin: 1rem 0; }
+  .rec .stat b { overflow-wrap: anywhere; font-size: .95rem; }
+  .rec .stat.unk { border-style: dashed; }
+  .chk { display: flex; align-items: center; gap: .5rem; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="../index.html">Kafka <span>/ 13 Change data capture lab</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="../index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+  <nav class="progress" data-progress aria-label="Sections in this module"></nav>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow">Module 13 · Depth lab · Kafka 4.3</div>
+  <h1>Change data capture and the outbox, lab</h1>
+  <p class="lede">Module 08 described change data capture and the outbox pattern, but could not run them. This lab runs PostgreSQL and Debezium, captures a table, builds an outbox, and then stops a connector to see what the database does with its log.</p>
+
+  <div class="lab-panel" id="cdc-demo" style="margin:0">
+    <h3>Try it: pick a change, read the record</h3>
+    <p class="hint">Choose an operation on the <code>orders</code> table. The tiles show the change record the lab produced. The checkbox switches the table setting <code>REPLICA IDENTITY FULL</code>.</p>
+    <div class="controls">
+      <label for="cd-op">Operation</label>
+      <select id="cd-op">
+        <option value="r">Snapshot read of an existing row</option>
+        <option value="c">Insert a row</option>
+        <option value="u">Update a row</option>
+        <option value="d">Delete a row</option>
+      </select>
+      <label class="chk" for="cd-full"><input type="checkbox" id="cd-full" checked> REPLICA IDENTITY FULL on</label>
+    </div>
+    <div class="rec" id="cd-tiles"></div>
+    <div class="readout" id="cd-out" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- ============================ 0 ============================ -->
+<section class="part col" id="summary" data-title="Summary">
+  <span class="offset-tag">offset 0</span>
+  <h2>What it is and why it exists</h2>
+  <p>A service that changes its database and also publishes an event to Kafka has a problem. If it writes twice, one write can succeed while the other fails. Module 08 explains this "dual write" problem and names two answers: <strong>change data capture</strong> and the <strong>outbox pattern</strong>. See <a href="08-ecosystem.html">module 08</a> for the theory, Kafka Connect, dead-letter topics and the schema registry. This module does not repeat them.</p>
+  <p>Change data capture means a program reads the database's own change log and publishes each insert, update and delete as a Kafka record. The tool here is <strong>Debezium</strong>, a set of source connectors for Kafka Connect. The database is PostgreSQL 16. You run both and read the records they produce.</p>
+  <p>The lab shows four things: what a change record looks like, how an outbox keeps rolled-back work out of Kafka, how the database behaves while a connector is stopped, and one odd result about lag that you should expect.</p>
+  <div class="note">
+    <p><strong>The one-sentence version.</strong> The database log becomes a Kafka topic, in commit order and at least once, and the connector's replication slot decides how much log the database must keep.</p>
+  </div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<section class="part col" id="model" data-title="Mental model">
+  <span class="offset-tag">offset 1</span>
+  <h2>Mental model</h2>
+  <p>Think of two ways to learn what happened in a database.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Way</th><th>What you read</th><th>What you get</th></tr></thead>
+      <tbody>
+        <tr><td>Direct table capture</td><td>The log entries for your business tables, such as <code>orders</code>.</td><td>One record per row change, in the shape of the table. The record says what changed in the table, not why.</td></tr>
+        <tr><td>Outbox</td><td>The log entries for one extra table, <code>outbox</code>, that the service fills on purpose.</td><td>One record per business event that you designed. The event is written in the same transaction as the business change.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>Words used in this module</h3>
+  <ul>
+    <li><strong>Write-ahead log (WAL).</strong> The file in which PostgreSQL records every change before it applies it. Capture tools read it.</li>
+    <li><strong>Logical decoding.</strong> A PostgreSQL feature that turns the WAL into row-level changes. It needs the server setting <code>wal_level=logical</code>.</li>
+    <li><strong>Replication slot.</strong> A bookmark inside PostgreSQL that remembers how far a reader has confirmed. PostgreSQL keeps all log after that point.</li>
+    <li><strong>Publication.</strong> A named list of tables whose changes are sent to readers.</li>
+    <li><strong>LSN.</strong> Log sequence number: a position in the WAL. Each change record carries one.</li>
+    <li><strong>Snapshot.</strong> When a connector first starts it reads the rows that already exist. Those records have operation code <code>r</code>.</li>
+  </ul>
+  <p>Use the tiles at the top of the page. Pick each operation and note which of <em>before</em> and <em>after</em> is empty.</p>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="part col" id="internals" data-title="How it works">
+  <span class="offset-tag">offset 2</span>
+  <h2>How it works internally</h2>
+
+  <h3>The path of one change</h3>
+  <ol class="steps">
+    <li class="on">The application commits a transaction. PostgreSQL writes it to the WAL.</li>
+    <li class="on">The replication slot lets the connector read decoded changes. The lab uses the output plugin <code>pgoutput</code>.</li>
+    <li class="on">The connector sends each change into Kafka. For the table <code>public.orders</code> and topic prefix <code>shop</code>, the topic is <code>shop.public.orders</code>.</li>
+    <li class="on">Later, the connector tells PostgreSQL how far it has safely delivered. Only then can PostgreSQL discard older log.</li>
+  </ol>
+
+  <h3>The change record</h3>
+  <p>The record key is the table's primary key, so all changes to one row go to the same partition in order. The value holds an operation code, a <code>before</code> image, an <code>after</code> image and a <code>source</code> block.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Operation</th><th>Code</th><th>before</th><th>after</th></tr></thead>
+      <tbody>
+        <tr><td>Snapshot read</td><td><code>r</code></td><td>null</td><td>the row</td></tr>
+        <tr><td>Insert</td><td><code>c</code></td><td>null</td><td>the row</td></tr>
+        <tr><td>Update</td><td><code>u</code></td><td>the old row</td><td>the new row</td></tr>
+        <tr><td>Delete</td><td><code>d</code></td><td>the old row</td><td>null</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>All four rows of this table were seen in the lab, with <code>REPLICA IDENTITY FULL</code> set on the table. After a delete record, the lab topic also held a second record with the same key and a null value. That is a <strong>tombstone</strong>: for a compacted topic it marks the key for removal.</p>
+  <p>What the <code>before</code> image holds without <code>REPLICA IDENTITY FULL</code> was not tested. The usual claim is that it is empty or holds only the key columns. <span class="tag-unverified">unverified</span></p>
+
+  <h3>How the outbox is routed</h3>
+  <p>The second connector in the lab uses a <strong>transform</strong>, a small step that rewrites each record. The transform is Debezium's <code>EventRouter</code>. It turns an outbox row into a plain event. In the lab, the routing went by the column <code>aggregatetype</code>: rows with <code>order</code> landed in the topic <code>outbox.event.order</code>. The message key was the <code>aggregateid</code> column. The value was the <code>payload</code> column. Each message had a header <code>id</code> holding the row's uuid.</p>
+  <p>Where the event <code>type</code> (<code>OrderCreated</code> or <code>OrderPaid</code>) goes was not visible in the consumer output, and I did not check it. It may be a header. <span class="tag-unverified">unverified</span></p>
+
+  <h3>Why a stopped connector costs disk</h3>
+  <p>A slot holds a position. PostgreSQL may not delete log after that position. While a connector runs, the position advances. While it is stopped, the slot is inactive and the position stays still, so the log grows. Part C of the lab measures this.</p>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="part" id="configs" data-title="Configs">
+  <div class="col">
+    <span class="offset-tag">offset 3</span>
+    <h2>Every relevant config</h2>
+    <p>These are the settings that ran in the lab. The lab used the Docker image <code>postgres:16-alpine</code> and the image <code>quay.io/debezium/connect:latest</code>, which contained Debezium 3.7.0.Final and Kafka Connect 4.3.1.</p>
+  </div>
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Where</th><th>Setting</th><th>Lab value</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>PostgreSQL start option</td><td><code>wal_level</code></td><td><code>logical</code></td><td>Lets PostgreSQL decode the log into row changes. Passed as <code>-c wal_level=logical</code>.</td></tr>
+        <tr><td>Table</td><td><code>REPLICA IDENTITY</code></td><td><code>FULL</code> on <code>orders</code></td><td>Set with <code>ALTER TABLE orders REPLICA IDENTITY FULL</code>. The lab saw full <code>before</code> images on update and delete.</td></tr>
+        <tr><td>Connector</td><td><code>connector.class</code></td><td><code>io.debezium.connector.postgresql.PostgresConnector</code></td><td>Selects the PostgreSQL source connector.</td></tr>
+        <tr><td>Connector</td><td><code>plugin.name</code></td><td><code>pgoutput</code></td><td>The decoding plugin built into PostgreSQL.</td></tr>
+        <tr><td>Connector</td><td><code>database.hostname</code>, <code>port</code>, <code>user</code>, <code>password</code>, <code>dbname</code></td><td><code>pg</code>, 5432, <code>postgres</code>, <code>lab</code>, <code>postgres</code></td><td>How to reach the database. Written with the prefix <code>database.</code> in the real request (see the lab).</td></tr>
+        <tr><td>Connector</td><td><code>topic.prefix</code></td><td><code>shop</code> and <code>shopout</code></td><td>Starts every topic name. Topic = prefix, schema, table.</td></tr>
+        <tr><td>Connector</td><td><code>table.include.list</code></td><td><code>public.orders</code>; <code>public.outbox</code></td><td>Which tables to capture.</td></tr>
+        <tr><td>Connector</td><td><code>slot.name</code></td><td><code>orders_slot</code>; <code>outbox_slot</code></td><td>Names the replication slot. Give each connector its own.</td></tr>
+        <tr><td>Connector</td><td><code>publication.name</code></td><td><code>orders_pub</code>; <code>outbox_pub</code></td><td>Names the publication.</td></tr>
+        <tr><td>Connector</td><td>converters</td><td>JSON, <code>schemas.enable=false</code></td><td>Writes plain JSON without the schema envelope. The outbox connector used a String key converter.</td></tr>
+        <tr><td>Outbox connector</td><td><code>transforms</code>, <code>transforms.outbox.type</code></td><td><code>outbox</code>; <code>io.debezium.transforms.outbox.EventRouter</code></td><td>Turns outbox rows into routed events.</td></tr>
+        <tr><td>Connect REST</td><td><code>PUT /connectors/orders-cdc/stop</code></td><td>HTTP 204</td><td>Stops the connector; status becomes <code>STOPPED</code> with no tasks.</td></tr>
+        <tr><td>Connect REST</td><td><code>PUT /connectors/orders-cdc/resume</code></td><td>HTTP 202</td><td>Starts it again.</td></tr>
+        <tr><td>Connect cluster</td><td>internal topics</td><td><code>cdc-configs</code>, <code>cdc-offsets</code>, <code>cdc-status</code>, factor 3</td><td>Where the Connect worker keeps configs, offsets and status.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h3>Settings that exist but were not tested</h3>
+    <p>I know of these Debezium settings from memory. I did not run them, and I give no default values. <span class="tag-unverified">unverified</span></p>
+    <ul>
+      <li><code>snapshot.mode</code>: how the first read of existing rows behaves. <span class="tag-unverified">unverified</span></li>
+      <li><code>heartbeat.interval.ms</code>: makes an idle connector emit regular records so its slot can advance. <span class="tag-unverified">unverified</span></li>
+      <li><code>max.queue.size</code>: the size of the connector's internal queue. <span class="tag-unverified">unverified</span></li>
+      <li><code>publication.autocreate.mode</code>: whether the connector creates the publication. <span class="tag-unverified">unverified</span></li>
+      <li><code>slot.drop.on.stop</code>: whether the slot is dropped when the connector stops. <span class="tag-unverified">unverified</span></li>
+      <li><code>decimal.handling.mode</code>: how decimal columns are encoded. <span class="tag-unverified">unverified</span></li>
+      <li><code>tombstones.on.delete</code>: whether a tombstone follows each delete record. <span class="tag-unverified">unverified</span></li>
+      <li><code>offset.flush.interval.ms</code>: how often Connect saves source offsets. <span class="tag-unverified">unverified</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="part col" id="failures" data-title="Failure scenarios">
+  <span class="offset-tag">offset 4</span>
+  <h2>Failure scenarios</h2>
+
+  <div class="fail">
+    <h3>A stopped or dead connector fills the database disk</h3>
+    <dl>
+      <dt>You observe</dt><dd>After the connector was stopped, 60,000 inserted rows left its slot inactive and 8607 kB behind. Before, it was 23 kB behind.</dd>
+      <dt>Cause</dt><dd>PostgreSQL keeps all log after the slot's confirmed position, as long as the slot exists. A slot with no reader never lets go.</dd>
+      <dt>Fix</dt><dd>Monitor each slot's bytes behind (the lab query is in the lab section). Alert on an inactive slot. Drop a slot you will not use again.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>An idle table still holds log</h3>
+    <dl>
+      <dt>You observe</dt><dd>The <code>outbox_slot</code> stayed active, yet it was also 8607 kB behind. Its table had no changes at all.</dd>
+      <dt>Cause</dt><dd>The usual explanation: the slot advances only when the connector sees a change in a captured table, while the log grows from every table in the database. <span class="tag-unverified">unverified</span></dd>
+      <dt>Fix</dt><dd>Heartbeat settings exist for this case. I did not test them. <span class="tag-unverified">unverified</span></dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Lag looks stuck after a resume</h3>
+    <dl>
+      <dt>You observe</dt><dd>After <code>resume</code>, the topic reached its full end offset of 60007. Over the next 40 seconds the slot stayed about 8.8 MB behind (8813272, then 8852600 bytes).</dd>
+      <dt>Cause</dt><dd>The data was delivered, but the slot's confirmed position did not move. The likely reason is that the connector confirms positions only when it saves its offsets, by default about every 60 seconds. <span class="tag-unverified">unverified</span></dd>
+      <dt>Lesson</dt><dd>Do not trust "bytes behind" alone to say whether data reached Kafka. Check the topic end offset too.</dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>Decimal columns arrive as odd text</h3>
+    <dl>
+      <dt>You observe</dt><dd>The amount 40.00 appeared as <code>"D6A="</code> and 15.50 as <code>"Bg4="</code> in the JSON.</dd>
+      <dt>Cause</dt><dd>The default decimal handling probably encodes the number as bytes, which the JSON converter shows as base64 text. <span class="tag-unverified">unverified</span></dd>
+      <dt>Fix</dt><dd>A setting named <code>decimal.handling.mode</code> exists for this. I did not test it. <span class="tag-unverified">unverified</span></dd>
+    </dl>
+  </div>
+
+  <div class="fail">
+    <h3>The event type is missing for consumers</h3>
+    <dl>
+      <dt>You observe</dt><dd>The outbox consumer output showed the key and payload only. The names <code>OrderCreated</code> and <code>OrderPaid</code> were not visible.</dd>
+      <dt>Lesson</dt><dd>Before you build consumers, check where the router puts the event type. I did not. <span class="tag-unverified">unverified</span></dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="part col" id="lab" data-title="Hands-on lab">
+  <span class="offset-tag">offset 5</span>
+  <h2>Hands-on lab</h2>
+  <div class="note">
+    <p><strong>Every command below was run on 5 October 2026.</strong> The database and the Connect worker are in the main <code>docker-compose.yml</code> and start only with the <code>cdc</code> profile. This lab needs the main cluster running.</p>
+  </div>
+
+  <h3>Step 1. Start the stack</h3>
+  <div class="code"><pre><code>cd ~/Desktop/kafka-knowledge-base
+docker compose --profile cdc up -d
+k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+P() { docker exec -i pg psql -U postgres -q -A -t -c "$1"; }
+C=http://localhost:8087</code></pre></div>
+  <p>The service <code>pg</code> is PostgreSQL started with <code>-c wal_level=logical</code>. The service <code>cdc-connect</code> publishes its REST interface on host port 8087.</p>
+
+  <h3>Step 2. Create the tables</h3>
+  <div class="code"><pre><code>P "CREATE TABLE orders (id int PRIMARY KEY, customer text NOT NULL, amount numeric(10,2) NOT NULL, status text NOT NULL)"
+P "CREATE TABLE outbox (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), aggregatetype text NOT NULL, aggregateid text NOT NULL, type text NOT NULL, payload jsonb NOT NULL, created timestamptz NOT NULL DEFAULT now())"
+P "ALTER TABLE orders REPLICA IDENTITY FULL"
+P "INSERT INTO orders VALUES (1,'ana',40.00,'created')"</code></pre></div>
+  <p>One row exists before any connector. The connector will snapshot it.</p>
+
+  <h3>Step 3. Part A: register the connector for the table</h3>
+  <div class="code"><pre><code>curl -s -X POST $C/connectors -H 'Content-Type: application/json' -d '{
+  "name": "orders-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "database.hostname": "pg", "database.port": "5432",
+    "database.user": "postgres", "database.password": "lab",
+    "database.dbname": "postgres",
+    "topic.prefix": "shop",
+    "table.include.list": "public.orders",
+    "slot.name": "orders_slot",
+    "publication.name": "orders_pub",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false"
+  }}'
+# wait about 12 seconds
+curl -s $C/connectors/orders-cdc/status</code></pre></div>
+  <p>After about 12 seconds the connector was <code>RUNNING</code> and task 0 was <code>RUNNING</code>.</p>
+
+  <h3>Step 4. Change the table and read the topic</h3>
+  <div class="code"><pre><code>P "INSERT INTO orders VALUES (2,'ben',15.50,'created')"
+P "UPDATE orders SET status='paid' WHERE id=1"
+P "DELETE FROM orders WHERE id=2"
+k kafka-console-consumer.sh --bootstrap-server kafka-1:19092 --topic shop.public.orders --from-beginning --formatter-property print.key=true --timeout-ms 7000</code></pre></div>
+  <div class="out-label">Output, reduced to the fields that matter</div>
+  <pre class="out">key | op | before | after | source
+{"id":1} | r | null | {"id":1,"customer":"ana","amount":"D6A=","status":"created"} | snapshot=last lsn=22182616
+{"id":2} | c | null | {"id":2,"customer":"ben","amount":"Bg4=","status":"created"} | snapshot=false lsn=22460936
+{"id":1} | u | {... status created} | {... status paid} | snapshot=false lsn=22461128
+{"id":2} | d | {... ben ... created} | null | snapshot=false lsn=22461288
+{"id":2} | (value null: a tombstone, after the delete record)</pre>
+  <p>Read it in order. The first row is the snapshot of the row that existed before the connector. The delete is followed by a tombstone for the same key. The amount shows as base64 text, as described in the failure scenarios.</p>
+
+  <h3>Step 5. Part B: register the outbox connector</h3>
+  <div class="code"><pre><code>curl -s -X POST $C/connectors -H 'Content-Type: application/json' -d '{
+  "name": "outbox",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "database.hostname": "pg", "database.port": "5432",
+    "database.user": "postgres", "database.password": "lab",
+    "database.dbname": "postgres",
+    "topic.prefix": "shopout",
+    "table.include.list": "public.outbox",
+    "slot.name": "outbox_slot",
+    "publication.name": "outbox_pub",
+    "transforms": "outbox",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false"
+  }}'</code></pre></div>
+  <p>The connector reached <code>RUNNING</code>.</p>
+
+  <h3>Step 6. Three transactions</h3>
+  <div class="code"><pre><code>P "BEGIN; INSERT INTO orders VALUES (3,'cy',99.00,'created'); INSERT INTO outbox (aggregatetype,aggregateid,type,payload) VALUES ('order','3','OrderCreated','{\"orderId\":3,\"amount\":99.00}'); COMMIT;"
+P "BEGIN; INSERT INTO orders VALUES (4,'di',10.00,'created'); INSERT INTO outbox (aggregatetype,aggregateid,type,payload) VALUES ('order','4','OrderCreated','{\"orderId\":4,\"amount\":10.00}'); ROLLBACK;"
+P "BEGIN; UPDATE orders SET status='paid' WHERE id=3; INSERT INTO outbox (aggregatetype,aggregateid,type,payload) VALUES ('order','3','OrderPaid','{\"orderId\":3}'); COMMIT;"
+k kafka-topics.sh --bootstrap-server kafka-1:19092 --list | grep -E 'outbox|shop'
+k kafka-console-consumer.sh --bootstrap-server kafka-1:19092 --topic outbox.event.order --from-beginning --formatter-property print.key=true --property print.headers=true --timeout-ms 7000
+P "SELECT id, status FROM orders ORDER BY id"
+P "SELECT count(*) FROM outbox"</code></pre></div>
+  <div class="out-label">Results</div>
+  <pre class="out">topics listed (new ones): outbox.event.order, shop.public.orders
+
+outbox.event.order: exactly 2 messages, key "3" for both
+  value 1: "{\"amount\": 99.00, \"orderId\": 3}"
+  value 2: "{\"orderId\": 3}"
+  each with headers including id:&lt;uuid&gt; and __debezium.context.*
+  nothing for order 4 (rolled back)
+
+orders rows: 1|paid and 3|paid
+outbox row count: 2</pre>
+  <p>The rolled-back transaction produced nothing in Kafka. The payload arrived as an escaped JSON string. Both messages for order 3 share a key, so they stay in order on one partition. The flags in the console consumer line that print headers are my addition for this page; the recorded output showed headers, but I did not keep the exact flag. <span class="tag-unverified">unverified</span></p>
+
+  <h3>Step 7. Part C: stop a connector and watch the slot</h3>
+  <div class="code"><pre><code>SLOTS="SELECT slot_name, active, pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) FROM pg_replication_slots"
+P "$SLOTS"
+curl -s -o /dev/null -w '%{http_code}\n' -X PUT $C/connectors/orders-cdc/stop
+curl -s $C/connectors/orders-cdc/status
+P "INSERT INTO orders SELECT g,'bulk',1.00,'created' FROM generate_series(1000,60999) g"
+P "$SLOTS"</code></pre></div>
+  <div class="out-label">Results</div>
+  <pre class="out">before:  orders_slot  active=t  23 kB behind
+         outbox_slot  active=t  24 kB behind
+
+stop:    HTTP 204; status STOPPED; tasks []
+
+after 60,000 inserts:
+         orders_slot  active=f  8607 kB behind
+         outbox_slot  active=t  8607 kB behind</pre>
+  <p>The second slot is active, but its table saw no change. It is still 8607 kB behind.</p>
+
+  <h3>Step 8. Resume and measure</h3>
+  <div class="code"><pre><code>curl -s -o /dev/null -w '%{http_code}\n' -X PUT $C/connectors/orders-cdc/resume
+# run the slot query again over 40 seconds
+k kafka-get-offsets.sh --bootstrap-server kafka-1:19092 --topic shop.public.orders</code></pre></div>
+  <pre class="out">resume: HTTP 202
+bytes behind over 40 s: 8813272 -> 8852600 (about 8.8 MB, not falling)
+topic shop.public.orders end offset: 60007  (7 + 60,000)</pre>
+  <p>All data reached Kafka, yet the slot did not move within 40 seconds. The end offset command shown above is my wording for how to read it; the recorded value is the one printed. <span class="tag-unverified">unverified</span></p>
+
+  <h3>Step 9. Shut down</h3>
+  <div class="code"><pre><code>docker compose --profile cdc down</code></pre></div>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="part col" id="mistakes" data-title="Common mistakes">
+  <span class="offset-tag">offset 6</span>
+  <h2>Common mistakes and misconceptions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>People think</th><th>What is true</th></tr></thead>
+      <tbody>
+        <tr><td>Change data capture adds no load or risk to the database.</td><td>The slot makes the database keep its log. A stopped connector filled 8.6 MB for 60,000 small rows in the lab.</td></tr>
+        <tr><td>A stopped connector is harmless.</td><td>Its slot stays and PostgreSQL keeps log for it.</td></tr>
+        <tr><td>Rolled-back work may still reach Kafka.</td><td>Only committed changes are published. Order 4 never appeared.</td></tr>
+        <tr><td>A delete is one record.</td><td>The lab showed a delete record and then a tombstone with a null value.</td></tr>
+        <tr><td>The numbers arrive as written in the table.</td><td>Decimals appeared as base64 text with the JSON converter.</td></tr>
+        <tr><td>Bytes behind tells you if data reached Kafka.</td><td>After a resume, the topic was complete while the slot looked stuck.</td></tr>
+        <tr><td>An idle outbox table costs nothing.</td><td>Its slot was 8607 kB behind while the table saw no change.</td></tr>
+        <tr><td>Capture removes duplicates.</td><td>Delivery is at least once. Consumers must ignore repeats. See module 08.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="part col" id="staff" data-title="Staff-level questions">
+  <span class="offset-tag">offset 7</span>
+  <h2>Staff-level questions</h2>
+
+  <details class="qa"><summary>Outbox or direct table capture?</summary><div class="answer">
+    <p>Direct capture is simple and needs no change in the application, but the records follow the table's shape. A column rename changes what consumers see. An outbox publishes events that you designed, with a stable meaning, written in the same transaction as the business change. The lab showed the outbox also drops rolled-back work.</p>
+    <p>For events that other teams consume, prefer the outbox. For copying data to a store you own, direct capture is fine. Module 08 gives the same advice.</p>
+  </div></details>
+
+  <details class="qa"><summary>What ordering does a consumer get?</summary><div class="answer">
+    <p>The changes of one table are read from the log in commit order. The record key is the primary key, so changes to one row share a partition and stay ordered. Across different rows, or different topics, there is no order. In the lab, both events for order 3 had key "3".</p>
+    <p>I did not test what happens to ordering when a table has many partitions in the topic or when a key changes. <span class="tag-unverified">unverified</span></p>
+  </div></details>
+
+  <details class="qa"><summary>Can consumers see duplicates? When?</summary><div class="answer">
+    <p>Yes. Delivery is at least once. After a connector restart it may resend records from its last saved offset. I did not force a duplicate in the lab. <span class="tag-unverified">unverified</span></p>
+    <p>Each outbox message carried an <code>id</code> header with the row's uuid. A consumer stores the ids it has handled and skips a repeat. Make the check and the effect one atomic step.</p>
+  </div></details>
+
+  <details class="qa"><summary>A column is added to the table. What happens?</summary><div class="answer">
+    <p>I did not test a schema change. The general risk is that records change shape under running consumers, so you need a plan: add columns with defaults, update consumers first, and keep a schema registry in the path (module 08). <span class="tag-unverified">unverified</span></p>
+    <p>An outbox avoids this. Its payload is a document that you version yourself.</p>
+  </div></details>
+
+  <details class="qa"><summary>The table has a billion rows. How do you start the connector?</summary><div class="answer">
+    <p>The lab snapshot covered one row, so I cannot give timings. The first start reads all existing rows, tagged <code>r</code>, before it streams changes. It can take a long time and load the database. Setting <code>snapshot.mode</code> exists to change this behaviour. I did not test it. <span class="tag-unverified">unverified</span></p>
+    <p>Plan it: test on a copy, run it in a quiet period, and watch the slot, because the log grows while the snapshot runs. <span class="tag-unverified">unverified</span></p>
+  </div></details>
+
+  <details class="qa"><summary>How do you protect the database from slot lag, and what do you do with deletes on a compacted topic?</summary><div class="answer">
+    <p>Slots: measure bytes behind for every slot with the lab query, alert on inactive slots and growing lag, set an owner for each connector, and drop slots for retired connectors. Remember from the lab that a resumed connector may look behind for a while, so also check the topic's end offset.</p>
+    <p>Deletes: a delete record is followed by a tombstone with the same key and a null value. On a compacted topic, the tombstone lets Kafka eventually remove every record for that key. Without compaction, the tombstone does nothing special, and the topic keeps the full history. Whether to keep tombstones is a setting, <code>tombstones.on.delete</code>, which I did not test. <span class="tag-unverified">unverified</span></p>
+  </div></details>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="part col" id="test" data-title="Self-test">
+  <span class="offset-tag">offset 8</span>
+  <h2>Self-test</h2>
+  <details class="qa"><summary>1. Which PostgreSQL setting does capture need?</summary><div class="answer"><p><code>wal_level=logical</code>.</p></div></details>
+  <details class="qa"><summary>2. What operation code does a snapshot read have?</summary><div class="answer"><p><code>r</code>. Insert is <code>c</code>, update <code>u</code>, delete <code>d</code>.</p></div></details>
+  <details class="qa"><summary>3. Which of before and after is null on a delete?</summary><div class="answer"><p>The <code>after</code> image. The <code>before</code> image holds the old row.</p></div></details>
+  <details class="qa"><summary>4. What is the record key for the orders topic?</summary><div class="answer"><p>The primary key, for example <code>{"id":1}</code>.</p></div></details>
+  <details class="qa"><summary>5. Why did order 4 not appear in Kafka?</summary><div class="answer"><p>Its transaction rolled back. Only committed changes are published.</p></div></details>
+  <details class="qa"><summary>6. Why does a stopped connector put the database at risk?</summary><div class="answer"><p>Its slot becomes inactive but stays. PostgreSQL keeps all log after the slot's position, so disk use grows.</p></div></details>
+  <details class="qa"><summary>7. After resume, the topic was complete but the slot looked 8.8 MB behind. What does that show?</summary><div class="answer"><p>Bytes behind can lag the real state. Check the topic end offset as well. The likely cause, a delayed offset flush, was not verified.</p></div></details>
+  <details class="qa"><summary>8. How does a consumer ignore repeated outbox events?</summary><div class="answer"><p>It records the <code>id</code> header of each handled event and skips any id it has seen.</p></div></details>
+
+  <div class="pager">
+    <a class="btn" href="12-monitoring-lab.html">← 12 Monitoring lab</a>
+    <a class="btn primary" href="14-tiered-storage-lab.html">14 Tiered storage lab →</a>
+  </div>
+</section>
+
+</main>
+
+<script src="../assets/kb.js"></script>
+<script>
+(function () {
+  const op = document.getElementById('cd-op'), full = document.getElementById('cd-full');
+  const tiles = document.getElementById('cd-tiles'), out = document.getElementById('cd-out');
+  const ROW = '{"id":1,"customer":"ana","amount":"D6A=","status":"created"}';
+  const ROW2 = '{"id":1,"customer":"ana","amount":"D6A=","status":"paid"}';
+  const UNK = 'not tested';
+  const CASES = {
+    r: { key: '{"id":1}', code: 'r', before: 'null', after: ROW, src: 'snapshot=last', unkOff: false,
+         text: '<b>Snapshot read.</b> A row that existed before the connector started. There is no earlier version, so <i>before</i> is null.' },
+    c: { key: '{"id":2}', code: 'c', before: 'null', after: '{"id":2,"customer":"ben","amount":"Bg4=","status":"created"}', src: 'snapshot=false', unkOff: false,
+         text: '<b>Insert.</b> A new row has no earlier version, so <i>before</i> is null. The amount shows as base64 text in the lab.' },
+    u: { key: '{"id":1}', code: 'u', before: ROW, after: ROW2, src: 'snapshot=false', unkOff: true,
+         text: '<b>Update.</b> With the setting on, <i>before</i> held the whole old row, as the lab showed.' },
+    d: { key: '{"id":2}', code: 'd', before: '{"id":2,"customer":"ben",...,"status":"created"}', after: 'null', src: 'snapshot=false', unkOff: true,
+         text: '<b>Delete.</b> <i>after</i> is null. The lab then wrote a second record with key {"id":2} and a null value: a tombstone.' }
+  };
+  function tile(label, val, unk) {
+    const d = document.createElement('div');
+    d.className = 'stat' + (unk ? ' unk' : '');
+    const b = document.createElement('b'); b.textContent = val;
+    const s = document.createElement('span'); s.textContent = label;
+    d.appendChild(b); d.appendChild(s);
+    tiles.appendChild(d);
+  }
+  function draw() {
+    const c = CASES[op.value];
+    const unk = !full.checked && c.unkOff;
+    tiles.innerHTML = '';
+    tile('record key', c.key);
+    tile('op', c.code);
+    tile('before', unk ? UNK : c.before, unk);
+    tile('after', c.after);
+    tile('source', c.src);
+    let t = c.text;
+    if (unk) {
+      t = '<b>Setting off.</b> The lab ran only with the setting on, so what <i>before</i> holds is not tested. The usual claim is that it is empty or holds only the key. <span class="tag-unverified">unverified</span>';
+    } else if (!full.checked) {
+      t += ' Here <i>before</i> is null with the setting on or off. <span class="tag-unverified">unverified for off</span>';
+    }
+    out.innerHTML = t;
+  }
+  op.addEventListener('change', draw);
+  full.addEventListener('change', draw);
+  draw();
+})();
+</script>
+</body>
+</html>

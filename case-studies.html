@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case studies · Kafka knowledge base</title>
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('kb-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/kb.css">
+<style>
+  .kindbadge { font: 600 .75rem var(--mono); text-transform: uppercase; letter-spacing: .04em; color: var(--primary); border: 1px solid var(--primary); border-radius: 4px; padding: .05rem .4rem; }
+  .fail .when { font: 500 .8rem var(--mono); color: var(--muted); margin-left: .4rem; }
+  .fail p { margin: .5rem 0; }
+  .fail h4 { margin: 1rem 0 .3rem; font-size: .95rem; }
+  .fail ol { margin: .3rem 0 .8rem; padding-left: 1.3rem; }
+  .fail dd, .fail p, .fail li { overflow-wrap: anywhere; }
+  .fail .code pre { font-size: .8rem; }
+  .honest { border-left: 3px solid var(--gone); padding-left: .7rem; }
+  .meter-line { font: 500 .85rem var(--mono); color: var(--muted); margin: .5rem 0; }
+  .none { color: var(--muted); }
+  main section.part-block { margin-top: 2.5rem; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="brand" href="index.html">Kafka <span>/ case studies</span></a>
+    <div class="topbar-actions">
+      <a class="btn" href="index.html">All modules</a>
+      <button class="btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="hero">
+  <div class="eyebrow">Kafka 4.3 &middot; public cases, studied from the outside</div>
+  <h1>Case studies for engineers without production experience</h1>
+  <p class="lede">Nine published cases, each tied to the module that explains the mechanism. Then seven recipes to earn a little real experience on a laptop.</p>
+</div>
+
+<div class="wide">
+
+<div class="note">
+  <p><strong>What this is.</strong> A set of public write-ups from other teams. All sources were fetched on 5 October 2026. This page reports what each source says and nothing more. You read them from the outside.</p>
+  <p><strong>What this is not.</strong> It is not your experience. Never tell an interviewer that you lived one of these. Each case has a spoken version in the third person and a line that shows how to say it honestly.</p>
+</div>
+
+<div class="note warn">
+  <p><strong>What I dropped.</strong> Three items were not used because they could not be confirmed. A &ldquo;Kafka 4.0 on Kubernetes&rdquo; postmortem on dev.to: the page returned 404. A &ldquo;$2.3M fintech&rdquo; story: it is illustrative and has no source. Uber&rsquo;s multi-region disaster recovery blog: the page returned 404.</p>
+</div>
+
+<div class="controls" role="group" aria-label="Filter cases">
+  <label for="f-mod">Module</label>
+  <select id="f-mod"><option value="">All modules</option><option value="03">Module 03 Consumers</option><option value="04">Module 04 Replication</option><option value="05">Module 05 KRaft</option><option value="08">Module 08 Ecosystem</option><option value="09">Module 09 Operations</option><option value="10">Module 10 Multi-cluster</option><option value="12">Module 12 Monitoring</option><option value="14">Module 14 Tiered storage</option></select>
+  <label for="f-kind">Kind</label>
+  <select id="f-kind"><option value="">All kinds</option><option value="company incident">company incident</option><option value="scale story">scale story</option><option value="design flaw">design flaw</option><option value="design explainer">design explainer</option></select>
+  <button class="btn" type="button" id="f-reset">Clear filters</button>
+</div>
+<p class="meter-line" aria-live="polite"><span id="shown">9</span> of 9 cases shown. <span id="done">0</span> of 9 studied.</p>
+<p id="empty" class="none" hidden>No case matches these filters.</p>
+
+<section class="part-block" id="part-a" aria-labelledby="ha">
+<h2 id="ha">Part A. Nine published cases</h2>
+<article class="fail" id="case-1" data-kind="scale story" data-mods="05 09">
+  <h3>1. Apache Kafka supports 200,000 partitions per cluster</h3>
+  <p><span class="kindbadge">scale story</span> <span class="when">7 November 2018</span></p>
+  <p class="srcline">Source: <a href="https://blogsarchive.apache.org/kafka/entry/apache-kafka-supports-more-partitions" target="_blank" rel="noopener">Apache Kafka blog, "Apache Kafka Supports 200K Partitions Per Cluster"</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>The Kafka project recommended up to 4,000 partitions on each broker and up to 200,000 in a whole cluster. It then measured how two slow operations improved between Kafka 1.0.0 and 1.1.0.</dd>
+    <dt>Root cause, as stated</dt><dd>The post says the main reason for the cluster-wide limit is "to accommodate for the rare event of a hard failure of the controller". The controller is the part of the cluster that tracks partition leaders.</dd>
+    <dt>What changed</dt><dd>Kafka 1.1.0 made its calls to ZooKeeper asynchronous and batched the messages that tell brokers about new leaders. ZooKeeper is the older system that held cluster metadata.</dd>
+    <dt>The number that mattered</dt><dd>Controlled shutdown of a broker with 50,000 partitions across 5 brokers took 6.5 minutes on 1.0.0 and 3 seconds on 1.1.0. Reloading controller state for 100,000 partitions took 28 seconds on 1.0.0 and 14 seconds on 1.1.0.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/05-kraft.html">Module 05 KRaft</a>, <a href="modules/09-operations.html">Module 09 Operations</a></dd>
+    <dt>Note</dt><dd>This is the ZooKeeper era. Kafka 4 uses KRaft instead. Module 05 measured a controller failover of about 1 second on 3 nodes, which is a small cluster. This page makes no claim for large clusters.</dd>
+  </dl>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>Why does a limit for the whole cluster exist when each broker already has its own limit?</li>
+    <li>What work must a new controller do before it can serve requests, and how does the partition count change it?</li>
+    <li>Which of these two measured numbers would you report first to a manager, and why?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> A published Apache Kafka blog post describes a cluster that was allowed to grow to many partitions. It reports that the team recommended up to 4,000 partitions on each broker and 200,000 in a cluster. The team gave a cluster-wide limit mainly because a hard controller failure is rare but costly. In their test, shutting down a broker with 50,000 partitions across 5 brokers took 6.5 minutes on Kafka 1.0.0. Version 1.1.0 used asynchronous ZooKeeper calls and batched leader messages, and the same test took 3 seconds.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="1"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+<article class="fail" id="case-2" data-kind="scale story" data-mods="09 12 10">
+  <h3>2. LinkedIn: improving Kafka at a trillion messages a day</h3>
+  <p><span class="kindbadge">scale story</span> <span class="when">2 September 2015</span></p>
+  <p class="srcline">Source: <a href="https://engineering.linkedin.com/apache-kafka/how-we_re-improving-and-advancing-kafka-linkedin" target="_blank" rel="noopener">LinkedIn Engineering, "How We're Improving and Advancing Kafka at LinkedIn" by Kartik Paramasivam</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>LinkedIn described a Kafka deployment that grew 1,200 times in four years, from 1 billion messages a day in July 2011. It listed the problems that growth caused and the tools the team built.</dd>
+    <dt>Root cause, as stated</dt><dd>Several causes, all stated in the post. One application could hurt others on a shared cluster. In its words, "if one application starts abusing Kafka, it can have an adverse impact on the performance and SLAs for other applications that share the cluster". A service level agreement (SLA) is a promise about performance. Partitions were spread unevenly, which made hotspot brokers that risked disk and network. Topic deletion caused instability. Mirror Maker, the tool that copies data between clusters, could lose messages. Replica lag calculations failed during traffic spikes.</dd>
+    <dt>What changed</dt><dd>They built quotas that throttle producers and consumers over a bytes-per-second threshold. They built a new consumer that does not use ZooKeeper, fixes to make Mirror Maker lossless, time-based replica lag, and safe topic deletion. They also built Burrow for consumer lag, a monitoring framework, and Simoorg for failure testing.</dd>
+    <dt>The number that mattered</dt><dd>1 trillion published messages a day, peaks of 4.5 million messages per second, about 1.34 PB a week, and each message consumed by about four applications.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/09-operations.html">Module 09 Operations</a>, <a href="modules/12-monitoring-lab.html">Module 12 Monitoring</a>, <a href="modules/10-multi-cluster.html">Module 10 Multi-cluster</a></dd>
+  </dl>
+  <p class="honest"><strong>Not confirmed in the source:</strong> the post as summarised here gives no incident dates, no outage durations, and no figures for the effect of the fixes.</p>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>Which of the listed problems comes from sharing one cluster, and which comes from the size of the cluster?</li>
+    <li>Why would a lag measured in messages fail during a traffic spike, and why would a lag measured in time hold up better?</li>
+    <li>Which of the tools they built would you build first, and what would you watch to know it worked?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> A 2015 LinkedIn engineering post describes a Kafka deployment that carried 1 trillion messages a day. It says traffic grew 1,200 times in four years, and that one abusive application could hurt every other application on a shared cluster. The team added quotas that throttle producers and consumers above a bytes-per-second threshold. They also listed problems that quotas did not solve, such as hotspot brokers, unsafe topic deletion and Mirror Maker losing messages. Their fixes included time-based replica lag, safe topic deletion, lossless Mirror Maker changes, and tools named Burrow and Simoorg.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="2"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+<article class="fail" id="case-3" data-kind="company incident" data-mods="09">
+  <h3>3. Honeycomb: brokers throttled by the cloud network</h3>
+  <p><span class="kindbadge">company incident</span> <span class="when">29 August 2023</span></p>
+  <p class="srcline">Source: <a href="https://www.honeycomb.io/blog/incident-resolution-september-retrospective" target="_blank" rel="noopener">Honeycomb, "Incident Resolution: Do You Remember, the Twenty Fires of September?" by Fred Hebert</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>Delays appeared in a processing service and persisted even after the team scaled it. The team traced the problem to the Kafka brokers.</dd>
+    <dt>Root cause, as stated</dt><dd>As stated: the brokers were "being throttled over network allowances by AWS". AWS is the cloud provider.</dd>
+    <dt>What changed</dt><dd>The post says "We needed to scale our cluster vertically to get more network capacity". Vertical scaling means bigger machines rather than more of them. The team moved high-impact partitions to larger instances first and then moved the rest gradually. They added "50% extra capacity", but delays recurred.</dd>
+    <dt>The number that mattered</dt><dd>50% extra capacity was added, and the delays still came back.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/09-operations.html">Module 09 Operations</a></dd>
+  </dl>
+  <p class="honest"><strong>Not confirmed in the source:</strong> the exact instance types and the duration of the incident.</p>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>Why does adding more consumers not help when the brokers are the limit?</li>
+    <li>Which broker metrics would show a network limit before users see delay?</li>
+    <li>Why move the high-impact partitions first rather than all partitions at once?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> A Honeycomb engineering post describes a month of incidents that included delays in a processing service. The team saw that those delays persisted even when they scaled the service itself. They decided the Kafka brokers were being throttled over network allowances by AWS, so they moved high-impact partitions to larger instances and then the rest. The problem was not over: after adding 50% extra capacity, the delays recurred. The change they described was vertical scaling for more network capacity, and the post goes on to find a second cause.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="3"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+<article class="fail" id="case-4" data-kind="company incident" data-mods="03">
+  <h3>4. Honeycomb: one connection per broker in the client library</h3>
+  <p><span class="kindbadge">company incident</span> <span class="when">29 August 2023</span></p>
+  <p class="srcline">Source: <a href="https://www.honeycomb.io/blog/incident-resolution-september-retrospective" target="_blank" rel="noopener">Honeycomb, "Incident Resolution: Do You Remember, the Twenty Fires of September?" by Fred Hebert (same post as case 3)</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>After the brokers were scaled, delays continued. The team looked at how their consumers talked to the brokers. The post also mentions a Kafka auto-balancer, a tool that moves partitions between brokers, that repeatedly got stuck and needed manual restarts.</dd>
+    <dt>Root cause, as stated</dt><dd>As stated: with the Sarama client library, "Kafka consumer groups open only a single connection to any leader, regardless of how many partitions are going to be fed from it". The cause was contention for the connection buffer when several partitions from one broker were assigned to a single consumer. The root cause of the auto-balancer getting stuck is not stated.</dd>
+    <dt>What changed</dt><dd>The team tried increasing buffer settings and throughput over several days. The post gives no numbers for this.</dd>
+    <dt>The number that mattered</dt><dd>One connection to each leader broker, no matter how many partitions it feeds. That fact is the number that mattered.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/03-consumers.html">Module 03 Consumers</a></dd>
+  </dl>
+  <p class="honest"><strong>Not confirmed in the source:</strong> the cause of the auto-balancer getting stuck, and any numbers for the buffer changes.</p>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>What happens to fetch throughput when many partitions share one connection and one buffer?</li>
+    <li>Which consumer setting or assignment choice could spread partitions from one broker across consumers?</li>
+    <li>How would you tell connection contention apart from a slow consumer, using only metrics?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> The same Honeycomb post describes a second problem after the brokers were scaled. It says delays continued, and the team looked at the Sarama client library. They found that a consumer group opens one connection to each leader broker, so several partitions from one broker compete for one connection buffer. The fix was not quick: they tried larger buffer settings and more throughput over several days. The post also says a Kafka auto-balancer kept getting stuck and needed manual restarts, and it does not state why.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="4"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+<article class="fail" id="case-5" data-kind="scale story" data-mods="03 08 10">
+  <h3>5. Uber: uForwarder, a consumer proxy for Kafka</h3>
+  <p><span class="kindbadge">scale story</span> <span class="when">5 February 2026</span></p>
+  <p class="srcline">Source: <a href="https://www.uber.com/blog/introducing-ufowarder/" target="_blank" rel="noopener">Uber Engineering, "Introducing uForwarder: The Consumer Proxy for Kafka Async Queuing"</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>Uber built a proxy that sits between Kafka and consumer services and pushes messages to them. Over 1,000 consumer services are onboarded.</dd>
+    <dt>Root cause, as stated</dt><dd>Three problems, as stated. First, head-of-line blocking: one message that cannot be processed blocks the messages behind it. Messages fail because of size limits such as the 4 MB gRPC default, invalid consumer instances or request filtering. They become poison-pill messages, which are messages that keep failing and block the consumer. Second, partition scalability and rebalancing do not fit queue-like use. Third, hardware efficiency: the proxy fleet grew from "two digits of servers" to "hundreds, eventually thousands".</dd>
+    <dt>What changed</dt><dd>Context-aware routing through message headers. Active head-of-line blocking resolution: when tracker utilisation exceeds 90% and uncommitted messages are below 2%, it cancels requests and routes the messages to dead-letter queues. A consumer auto-rebalancer that scales up fast, scales down slowly and keeps placement sticky. Delay processing that pauses only specific partitions.</dd>
+    <dt>The number that mattered</dt><dd>Thresholds of 90% tracker utilisation and 2% uncommitted messages trigger the blocking resolution. Over 1,000 consumer services are onboarded.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/03-consumers.html">Module 03 Consumers</a>, <a href="modules/08-ecosystem.html">Module 08 Ecosystem</a>, <a href="modules/10-multi-cluster.html">Module 10 Multi-cluster</a></dd>
+  </dl>
+  <p class="honest"><strong>Not confirmed in the source:</strong> any throughput, latency or cost numbers. The post gives none.</p>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>Why is a poison-pill message worse in a partitioned log than in a classic queue?</li>
+    <li>What does a dead-letter queue give up, and what does it protect?</li>
+    <li>Why scale down slowly but up fast?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> A February 2026 Uber engineering post describes a consumer proxy called uForwarder. It says messages that fail on limits such as the 4 MB gRPC default can block every message behind them. Uber decided to detect that state actively: when tracker utilisation exceeds 90% and uncommitted messages are below 2%, the proxy cancels requests and routes messages to dead-letter queues. The post also lists a fleet that grew from two digits of servers to hundreds and eventually thousands, which drove the work on efficiency and auto-rebalancing. It reports that over 1,000 consumer services are onboarded.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="5"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+<article class="fail" id="case-6" data-kind="scale story" data-mods="14">
+  <h3>6. Uber: tiered storage for Kafka</h3>
+  <p><span class="kindbadge">scale story</span> <span class="when">1 July 2024</span></p>
+  <p class="srcline">Source: <a href="https://www.uber.com/blog/kafka-tiered-storage/" target="_blank" rel="noopener">Uber Engineering, "Introduction to Kafka Tiered Storage at Uber"</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>Uber moved to tiered storage, where recent data stays on the broker and older data moves to cheaper remote storage.</dd>
+    <dt>Root cause, as stated</dt><dd>Storage and compute were tightly coupled. The post says "Kafka cluster storage is typically scaled by adding more broker nodes to the cluster. But this also adds needless memory and CPUs". Longer retention needed more nodes and separate pipelines to offload old data.</dd>
+    <dt>What changed</dt><dd>Tiered storage (KIP-405, the Kafka improvement proposal for it). A local tier holds recent data, for hours. A remote tier on S3, GCS or Azure holds history, for days to months. It has run in production for "~1-2 years in different workloads".</dd>
+    <dt>The number that mattered</dt><dd>None. The post gives no measured numbers: no retention, no broker count, no recovery time and no cost. Say that plainly.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/14-tiered-storage-lab.html">Module 14 Tiered storage</a></dd>
+  </dl>
+  <p class="honest"><strong>Not confirmed in the source:</strong> retention, broker count, recovery time and cost. The post gives no measured numbers.</p>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>Which resource does a broker need for storage, and which does it waste when you add nodes only for disk?</li>
+    <li>What gets slower when a consumer reads old data from the remote tier?</li>
+    <li>What would you measure before and after a move like this to prove it helped?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> A July 2024 Uber engineering post describes why storage and compute were tightly coupled in their Kafka clusters. It says that adding broker nodes for storage also adds needless memory and processors, and longer retention needed separate offload pipelines. Uber chose tiered storage, with recent data on a local tier and history on remote object storage. The post does not report measured results, so any claim about savings would go beyond it. It says the feature has run in production for about one to two years in different workloads.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="6"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+<article class="fail" id="case-7" data-kind="scale story" data-mods="08 03 12">
+  <h3>7. Cloudflare: schemas, contracts and metrics</h3>
+  <p><span class="kindbadge">scale story</span> <span class="when">3 April 2023</span></p>
+  <p class="srcline">Source: <a href="https://www.infoq.com/news/2023/04/cloudflare-kafka-lessons-learned/" target="_blank" rel="noopener">InfoQ, "Tales of Kafka at Cloudflare" (QCon London talk by Andrea Medda and Matt Boyle)</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>Cloudflare engineers described lessons from running Kafka for many services. The cluster handled "1 trillion messages".</dd>
+    <dt>Root cause, as stated</dt><dd>Two problems. Services "still ended up being tightly coupled because of an unstructured approach to schema management". A schema is the agreed shape of a message. Separately, during growth in load in the pandemic, a critical consumer "had begun to breach its Service Level Agreements", and the cause was hard to find at first.</dd>
+    <dt>What changed</dt><dd>They moved from JSON to Protobuf and built a client-side validation library. They added OpenTelemetry tooling, a standard for traces and metrics, to their SDKs. Their four lessons: balance configurability with standardisation, use strict 1:1 contract interfaces, invest in metrics, and write clear adoption documentation.</dd>
+    <dt>The number that mattered</dt><dd>1 trillion messages handled.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/08-ecosystem.html">Module 08 Ecosystem</a>, <a href="modules/03-consumers.html">Module 03 Consumers</a>, <a href="modules/12-monitoring-lab.html">Module 12 Monitoring</a></dd>
+  </dl>
+  <p class="honest"><strong>Not confirmed in the source:</strong> cluster and node counts.</p>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>How can services be tightly coupled even though they only talk through Kafka?</li>
+    <li>Why validate messages in the client library and not only on the broker?</li>
+    <li>What metrics would have helped find a consumer that was breaching its agreement?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> A 2023 QCon London talk, reported by InfoQ, describes Cloudflare running Kafka for a very large number of messages. The speakers said services were still tightly coupled because schema management was unstructured. The team decided to move from JSON to Protobuf and to build a client-side validation library. During pandemic load growth, a critical consumer began to breach its service level agreements, and the cause was hard to find at first. The team added OpenTelemetry tooling to their SDKs and listed four lessons, including investing in metrics.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="7"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+<article class="fail" id="case-8" data-kind="design flaw" data-mods="04">
+  <h3>8. KAFKA-3861: a shrunk in-sync set before a leader crash</h3>
+  <p><span class="kindbadge">design flaw</span> <span class="when">affected version 0.10.0.0; status as fetched 5 October 2026</span></p>
+  <p class="srcline">Source: <a href="https://issues.apache.org/jira/browse/KAFKA-3861" target="_blank" rel="noopener">Apache Jira ticket KAFKA-3861, "Shrunk ISR before leader crash makes the partition unavailable", reporter Maysam Yabandeh</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>A leader shrinks the in-sync set, the group of replicas that are up to date, down to itself. Then it crashes.</dd>
+    <dt>Root cause, as stated</dt><dd>As described in the ticket: the controller cannot elect a new leader from followers that are outside the in-sync set. With unclean election disabled, the partition can be unavailable. Restarting the crashed broker may even trigger cascading failures.</dd>
+    <dt>What changed</dt><dd>Nothing yet, as far as the ticket shows. The fix version is none and the status was open when fetched on 5 October 2026.</dd>
+    <dt>The number that mattered</dt><dd>Affected version 0.10.0.0. Fix version: none. Status: open.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/04-replication.html">Module 04 Replication</a></dd>
+    <dt>Note</dt><dd>Module 04 explains eligible leader replicas, which keep recently fenced replicas as election candidates. This page does not claim that this ticket was closed by them. The ticket was still open when fetched.</dd>
+  </dl>
+  <p class="honest"><strong>Not confirmed in the source:</strong> whether any later change closed this ticket. The page only reports that its status was open.</p>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>Why does Kafka refuse to elect a replica that is outside the in-sync set?</li>
+    <li>What is the trade between availability and losing data in this scenario?</li>
+    <li>What would you check to know whether a partition is in this state right now?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> A Jira ticket, KAFKA-3861, reports a design flaw seen on Kafka 0.10.0.0. It describes a leader that shrinks the in-sync set to only itself and then crashes. The controller then cannot choose a new leader from followers outside the in-sync set, so with unclean election disabled the partition can be unavailable. The ticket also says that restarting the crashed broker may trigger cascading failures. It showed no fix version and an open status on 5 October 2026.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="8"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+<article class="fail" id="case-9" data-kind="design explainer" data-mods="04">
+  <h3>9. KIP-966: the last replica standing</h3>
+  <p><span class="kindbadge">design explainer</span> <span class="when">17 August 2023</span></p>
+  <p class="srcline">Source: <a href="https://jack-vanlightly.com/blog/2023/8/17/kafka-kip-966-fixing-the-last-replica-standing-issue" target="_blank" rel="noopener">Jack Vanlightly, "Kafka KIP-966 - Fixing the Last Replica Standing issue"</a> (external link)</p>
+  <dl>
+    <dt>What happened</dt><dd>A walk-through of one failure with replication factor 3 and minimum in-sync replicas 2. The leader is R1 and the in-sync set is [R1, R2, R3]. R3 is fenced, which removes it from the set: [R1, R2]. R1 acknowledges records that only R2 has. Then R2 is fenced and the set is [R1], the "last replica standing". An operating-system-level failure kills R1, and its page cache and unflushed data are lost.</dd>
+    <dt>Root cause, as stated</dt><dd>When R1 restarts as leader, R2 and R3 truncate their logs to match. In the post's words: "it forces its followers to truncate their logs to match its own - this turns a local data loss issue into a global one."</dd>
+    <dt>What changed</dt><dd>KIP-966 introduces the Eligible Leader Replicas (ELR) set, so that recently fenced replicas stay as election candidates.</dd>
+    <dt>The number that mattered</dt><dd>Replication factor 3, minimum in-sync replicas 2, and an in-sync set that shrinks to one replica.</dd>
+    <dt>Mechanism</dt><dd><a href="modules/04-replication.html">Module 04 Replication</a></dd>
+    <dt>Note</dt><dd>The lab in module 04 shows the Elr column in the describe output.</dd>
+  </dl>
+  <h4>Questions to ask yourself</h4>
+  <ol>
+    <li>Why can a record be acknowledged and still be lost in this sequence?</li>
+    <li>Why does the truncation on R2 and R3 make the loss global?</li>
+    <li>What does keeping R2 and R3 as candidates change about who may be elected?</li>
+  </ol>
+  <details class="qa"><summary>How to say this in an interview</summary><div class="answer">
+    <p><strong>Spoken version, in third person:</strong> A 2023 blog post by Jack Vanlightly explains a data-loss path called the last replica standing. With replication factor 3 and minimum in-sync replicas 2, two followers are fenced one after the other, and the leader acknowledges records held only by itself and one follower, then ends up alone. An operating-system-level failure kills that leader and loses its unflushed data. When it restarts as leader, the other replicas truncate their logs to match, so a local loss becomes a global one. KIP-966 changed this by adding the Eligible Leader Replicas set, which keeps recently fenced replicas as election candidates.</p>
+    <p><strong>How to say it honestly:</strong> Start with "In a published case I studied, ..." and name the source. Do not say "we" or "I saw". You read this case. You did not run it.</p>
+  </div></details>
+  <label class="rubric"><input type="checkbox" data-case="9"><span>I studied this case and can retell it in my own words.</span></label>
+</article>
+</section>
+
+<section class="part-block" id="part-b" aria-labelledby="hb">
+<h2 id="hb">Part B. Earning the experience on a laptop</h2>
+<div class="note">
+  <p>Each recipe covers one gap. Commands come from the modules unless the page says <span class="tag-unverified">unverified</span> or &ldquo;not run in the labs&rdquo;. The helper and address used in every command:</p>
+  <div class="code"><pre><code>k() { docker exec -i kafka-1 /opt/kafka/bin/"$@"; }
+B=kafka-1:19092</code></pre></div>
+  <p>These recipes use the 3-broker lab cluster on one laptop. Results describe that laptop only.</p>
+</div>
+<article class="fail" id="recipe-1">
+  <h3>Recipe 1. Partition count at scale</h3>
+  <dl>
+    <dt>The gap</dt><dd>You have never seen a broker carry thousands of partitions. Case 1 shows why that matters.</dd>
+    <dt>What to run</dt><dd><p>Create a topic with many partitions, using the create command from module 09 and the 3-broker lab cluster. Raise the count in steps and keep the replication factor at 3.</p><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --create --topic many-a --partitions 100 --replication-factor 3</code></pre></div><p>Stop and start one broker as module 04 does, then run the three health checks from module 09 until they print nothing.</p><div class="code"><pre><code>docker stop kafka-1
+docker start kafka-1
+k kafka-topics.sh --bootstrap-server $B --describe --under-replicated-partitions</code></pre></div><p>The step sizes (100 and then more), timing the commands with <code>time</code>, and reading memory with <code>docker stats --no-stream</code> are not run in the labs. <span class="tag-unverified">unverified</span> Whether a laptop can hold large counts is also <span class="tag-unverified">unverified</span>.</p></dd>
+    <dt>What to measure</dt><dd>The create time for each step. Broker memory from <code>docker stats</code> at each step. The time from <code>docker start</code> until the under-replicated check is empty.</dd>
+    <dt>What you may honestly claim</dt><dd>You may claim the three numbers for your own steps, on your own laptop. You may not claim a safe partition count for any real cluster.</dd>
+    <dt>Template</dt><dd><p>I measured topic creation time, broker memory and restart time at [N] partitions on a laptop with [CPU, memory, Docker setting]; I do not know how it behaves on real hardware; to check I would repeat it on a staging cluster with the same hardware as production.</p></dd>
+  </dl>
+</article>
+<article class="fail" id="recipe-2">
+  <h3>Recipe 2. Cross-zone latency</h3>
+  <dl>
+    <dt>The gap</dt><dd>All lab brokers share one machine, so there is no network distance between them.</dd>
+    <dt>What to run</dt><dd><p>You cannot measure cross-zone latency truthfully on one laptop. The brokers talk over a local virtual network that adds almost no delay.</p><p>You can set the rack labels that module 04 describes (<code>broker.rack</code> on brokers and <code>client.rack</code> on consumers, module 03) and check where replicas land. That tests placement only, not delay.</p><p>Setting rack labels in the lab compose file is not run in the labs. <span class="tag-unverified">unverified</span> This page names no tool for adding artificial delay, because none was run. Any such tool would be <span class="tag-unverified">unverified</span>.</p></dd>
+    <dt>What to measure</dt><dd>Replica placement from the describe output. Nothing about latency.</dd>
+    <dt>What you may honestly claim</dt><dd>You may claim that you understand rack placement and that every write crosses zones (module 04). You may not give a latency number.</dd>
+    <dt>Template</dt><dd><p>I checked replica placement with rack labels on a laptop with [setup]; I do not know how latency behaves on real hardware; to check I would measure produce latency with acks=all on a cluster whose brokers sit in three real zones.</p></dd>
+  </dl>
+</article>
+<article class="fail" id="recipe-3">
+  <h3>Recipe 3. Controller load</h3>
+  <dl>
+    <dt>The gap</dt><dd>The controller tracks every partition. You want to see how its work grows.</dd>
+    <dt>What to run</dt><dd><p>Use the quorum and metadata-log commands from module 05 before and after creating many topics (recipe 1).</p><div class="code"><pre><code>k kafka-metadata-quorum.sh --bootstrap-server $B describe --status
+k kafka-metadata-quorum.sh --bootstrap-server $B describe --replication
+dump() { docker exec kafka-2 /opt/kafka/bin/kafka-dump-log.sh --cluster-metadata-decoder \
+  --files /tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log; }
+dump | grep -o '"type":"[A-Z_]*"' | sort | uniq -c | sort -rn | head</code></pre></div><p>All of these commands come from module 05. Comparing the numbers before and after many topics is not run in the labs. <span class="tag-unverified">unverified</span></p></dd>
+    <dt>What to measure</dt><dd>HighWatermark and LogEndOffset from the quorum status. The count of each record type in the metadata log. The size of the metadata log directory.</dd>
+    <dt>What you may honestly claim</dt><dd>You may claim how the metadata log grew with your partition count, and that module 05 measured a failover of about 1 second on 3 nodes. You may not claim anything about a controller at 200,000 partitions.</dd>
+    <dt>Template</dt><dd><p>I measured metadata log record counts and the quorum high watermark before and after creating [N] topics on a laptop with [setup]; I do not know how it behaves on real hardware; to check I would watch controller failover time on a large staging cluster.</p></dd>
+  </dl>
+</article>
+<article class="fail" id="recipe-4">
+  <h3>Recipe 4. Broker failover time</h3>
+  <dl>
+    <dt>The gap</dt><dd>You know failover happens. You have not timed it, or compared a clean stop with a crash.</dd>
+    <dt>What to run</dt><dd><p>Use the failover steps from module 04 on a topic with 3 replicas. Stop a broker with <code>docker stop</code> and watch the describe output change.</p><div class="code"><pre><code>d() { k kafka-topics.sh --bootstrap-server $B --describe --topic $1 | tail -1; }
+docker stop kafka-3
+d ha2</code></pre></div><p>To see a crash instead of a clean stop, repeat with <code>docker kill</code> and poll the describe output once a second with timestamps.</p><p><code>docker kill</code>, the once-a-second loop and the timestamps are not run in the labs. <span class="tag-unverified">unverified</span> Module 04 only uses <code>docker stop</code>.</p></dd>
+    <dt>What to measure</dt><dd>Seconds from the stop or kill until the describe line shows a new leader and a smaller in-sync set. Compare stop with kill.</dd>
+    <dt>What you may honestly claim</dt><dd>You may claim the two timings on your laptop for one topic. You may not claim failover time for a loaded production cluster.</dd>
+    <dt>Template</dt><dd><p>I measured leader change time after docker stop and docker kill on a laptop with [setup]; I do not know how it behaves on real hardware; to check I would repeat it under production-like load.</p></dd>
+  </dl>
+</article>
+<article class="fail" id="recipe-5">
+  <h3>Recipe 5. Disk and page-cache pressure</h3>
+  <dl>
+    <dt>The gap</dt><dd>Module 09 says a cluster is fast while consumers read recent data from the operating system cache, and slow when reads go to disk. You have not seen that.</dd>
+    <dt>What to run</dt><dd><p>Advice only. Not run. Fill a topic with the performance tool from module 09, then read the old data from the start while producing new data.</p><div class="code"><pre><code>k kafka-producer-perf-test.sh --topic perf --num-records 400000 --record-size 200 --throughput -1 \
+  --command-property bootstrap.servers=$B
+k kafka-console-consumer.sh --bootstrap-server $B --topic perf --from-beginning --timeout-ms 6000</code></pre></div><p>Not run. Running the cold read at the same time as the producer is not in the labs. <span class="tag-unverified">unverified</span> Docker may run inside a virtual machine whose cache differs from the host. <span class="tag-unverified">unverified</span></p></dd>
+    <dt>What to measure</dt><dd>Produce latency from the performance tool output with and without the cold read. Disk use from <code>kafka-log-dirs.sh</code> (module 09).</dd>
+    <dt>What you may honestly claim</dt><dd>If you run it, you may claim the change in produce latency on your laptop. Until then, claim nothing beyond what module 09 explains.</dd>
+    <dt>Template</dt><dd><p>I [would measure] produce latency during a cold read of an old topic on a laptop with [setup]; I do not know how it behaves on real hardware; to check I would repeat it on brokers with the production disk and memory.</p></dd>
+  </dl>
+</article>
+<article class="fail" id="recipe-6">
+  <h3>Recipe 6. Noisy neighbours</h3>
+  <dl>
+    <dt>The gap</dt><dd>Case 2 shows one application hurting others. You want to see a quota work.</dd>
+    <dt>What to run</dt><dd><p>Use the quota steps from module 09.</p><div class="code"><pre><code>k kafka-configs.sh --bootstrap-server $B --alter --add-config 'producer_byte_rate=5242880' \
+  --entity-type clients --entity-name slow-client
+k kafka-producer-perf-test.sh --topic perf --num-records 400000 --record-size 200 --throughput -1 \
+  --command-property bootstrap.servers=$B client.id=slow-client
+k kafka-producer-perf-test.sh --topic perf --num-records 400000 --record-size 200 --throughput -1 \
+  --command-property bootstrap.servers=$B client.id=fast-client
+k kafka-configs.sh --bootstrap-server $B --alter --delete-config producer_byte_rate \
+  --entity-type clients --entity-name slow-client</code></pre></div><p>A short test shows no throttle. Module 09 reports that its first two attempts, with 6 MB and 20 MB of data, showed no slowing. A quota limits a steady rate, not a burst. Run for a minute or more.</p><p>Module 09 ran the commands above. A longer run of one minute or more is not run in the labs. <span class="tag-unverified">unverified</span></p></dd>
+    <dt>What to measure</dt><dd>MB each second and average latency for the limited and the unlimited client.</dd>
+    <dt>What you may honestly claim</dt><dd>You may claim what module 09 measured: the limited client averaged 21.64 MB each second against 39.03 for the unlimited one, in a short run that was mostly burst. You may not claim a steady-rate result until you run the longer test.</dd>
+    <dt>Template</dt><dd><p>I measured throughput for a quota-limited and an unlimited client on a laptop with [setup]; I do not know how it behaves on real hardware; to check I would run it for several minutes alongside real consumer load.</p></dd>
+  </dl>
+</article>
+<article class="fail" id="recipe-7">
+  <h3>Recipe 7. Upgrades</h3>
+  <dl>
+    <dt>The gap</dt><dd>Staff engineers plan rolling changes. You have not done one.</dd>
+    <dt>What to run</dt><dd><p>Run a rolling restart as module 09 describes: three health checks first, then one broker at a time.</p><div class="code"><pre><code>k kafka-topics.sh --bootstrap-server $B --describe --unavailable-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-min-isr-partitions
+k kafka-topics.sh --bootstrap-server $B --describe --under-replicated-partitions
+docker stop kafka-1
+docker start kafka-1
+# wait, then run the three checks again before touching kafka-2</code></pre></div><p>Read the cluster versions before and after with <code>k kafka-features.sh --bootstrap-server $B describe</code> (module 05). Plan to restart the active controller last (module 09).</p><p>A version upgrade itself is not run. Only the restart is. The wait time between restarts and the order of the three brokers are not run in the labs. <span class="tag-unverified">unverified</span></p></dd>
+    <dt>What to measure</dt><dd>Whether all three checks print nothing after each restart, and how long that takes.</dd>
+    <dt>What you may honestly claim</dt><dd>You may claim you practised the restart procedure and the health checks on a laptop. You may not claim you have upgraded a Kafka version.</dd>
+    <dt>Template</dt><dd><p>I measured the time for the health checks to clear after each broker restart on a laptop with [setup]; I do not know how it behaves on real hardware; to check I would run the same procedure on a staging cluster, including a real version change.</p></dd>
+  </dl>
+</article>
+</section>
+
+</div>
+</main>
+<script>
+(function () {
+  var cards = [].slice.call(document.querySelectorAll('#part-a article[data-kind]'));
+  var fm = document.getElementById('f-mod'), fk = document.getElementById('f-kind');
+  var shown = document.getElementById('shown'), doneEl = document.getElementById('done'), empty = document.getElementById('empty');
+  function apply() {
+    var n = 0;
+    cards.forEach(function (c) {
+      var ok = (!fm.value || c.dataset.mods.split(' ').indexOf(fm.value) > -1) && (!fk.value || c.dataset.kind === fk.value);
+      c.hidden = !ok;
+      if (ok) n++;
+    });
+    shown.textContent = n;
+    empty.hidden = n > 0;
+  }
+  fm.addEventListener('change', apply);
+  fk.addEventListener('change', apply);
+  document.getElementById('f-reset').addEventListener('click', function () { fm.value = ''; fk.value = ''; apply(); });
+  var boxes = [].slice.call(document.querySelectorAll('input[data-case]'));
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem('kb-cases') || '{}') || {}; } catch (e) { state = {}; }
+  function count() { doneEl.textContent = boxes.filter(function (b) { return b.checked; }).length; }
+  boxes.forEach(function (b) {
+    b.checked = !!state[b.dataset.case];
+    b.addEventListener('change', function () {
+      state[b.dataset.case] = b.checked;
+      try { localStorage.setItem('kb-cases', JSON.stringify(state)); } catch (e) { /* storage blocked */ }
+      count();
+    });
+  });
+  count();
+  apply();
+})();
+</script>
+<script src="assets/kb.js"></script>
+</body>
+</html>

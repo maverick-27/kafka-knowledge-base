@@ -1,0 +1,185 @@
+# Lab cluster for the Kafka knowledge base.
+# Three nodes, each acting as broker and controller (KRaft combined mode).
+# Based on the official example in the Apache Kafka repository:
+#   docker/examples/docker-compose-files/cluster/combined/plaintext
+#
+# Start:   docker compose up -d
+# Stop:    docker compose down          (add -v to also delete the data)
+#
+# From your laptop, connect to localhost:29092, localhost:39092, localhost:49092.
+# From inside a container, connect to kafka-1:19092, kafka-2:19092, kafka-3:19092.
+
+x-kafka-common: &kafka-common
+  image: apache/kafka:4.3.1
+  environment: &kafka-env
+    CLUSTER_ID: '4L6g3nShT-eMCtK--X86sw'
+    KAFKA_PROCESS_ROLES: 'broker,controller'
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+    KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093'
+    KAFKA_LISTENERS: 'PLAINTEXT://:19092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092'
+    KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+    KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+    KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+    KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    # Internal topics are replicated to all three brokers so the labs that
+    # stop a broker (module 04) keep working.
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+    KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 2
+    KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+    KAFKA_MIN_INSYNC_REPLICAS: 2
+    # Opens the broker's metrics port inside the lab network (module 12).
+    KAFKA_JMX_PORT: 9101
+    KAFKA_JMX_HOSTNAME: 'localhost'
+
+services:
+  kafka-1:
+    <<: *kafka-common
+    hostname: kafka-1
+    container_name: kafka-1
+    ports:
+      - '29092:9092'
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-1:19092,PLAINTEXT_HOST://localhost:29092'
+
+  kafka-2:
+    <<: *kafka-common
+    hostname: kafka-2
+    container_name: kafka-2
+    ports:
+      - '39092:9092'
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-2:19092,PLAINTEXT_HOST://localhost:39092'
+
+  kafka-3:
+    <<: *kafka-common
+    hostname: kafka-3
+    container_name: kafka-3
+    ports:
+      - '49092:9092'
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-3:19092,PLAINTEXT_HOST://localhost:49092'
+
+  # Optional web console at http://localhost:8085 to browse topics, partitions and lag.
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - '8085:8080'
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    environment:
+      KAFKA_CLUSTERS_0_NAME: 'lab'
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: 'kafka-1:19092,kafka-2:19092,kafka-3:19092'
+
+  # Schema registry for module 08, at http://localhost:8086 (not part of Apache Kafka).
+  schema-registry:
+    image: confluentinc/cp-schema-registry:latest
+    container_name: schema-registry
+    ports:
+      - '8086:8081'
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: 'schema-registry'
+      SCHEMA_REGISTRY_LISTENERS: 'http://0.0.0.0:8081'
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka-1:19092,kafka-2:19092,kafka-3:19092'
+
+  # A second, single-node cluster for module 10 (replication between clusters).
+  # From inside a container: kafka-dr:19092. From your laptop: localhost:59092.
+  kafka-dr:
+    image: apache/kafka:4.3.1
+    hostname: kafka-dr
+    container_name: kafka-dr
+    ports:
+      - '59092:9092'
+    environment:
+      CLUSTER_ID: 'Dr1g3nShT-eMCtK--X86dr'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-dr:9093'
+      KAFKA_LISTENERS: 'PLAINTEXT://:19092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-dr:19092,PLAINTEXT_HOST://localhost:59092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+
+  # ---- Monitoring for module 12. Not started by default. ----
+  # Start with:  docker compose --profile monitoring up -d
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    profiles: ['monitoring']
+    command: ['--kafka.server=kafka-1:19092', '--kafka.server=kafka-2:19092', '--kafka.server=kafka-3:19092', '--kafka.version=3.6.0']
+    depends_on: [kafka-1, kafka-2, kafka-3]
+    restart: on-failure
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    profiles: ['monitoring']
+    ports:
+      - '9095:9090'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    depends_on: [kafka-exporter]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    profiles: ['monitoring']
+    ports:
+      - '3005:3000'
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: 'Admin'
+    volumes:
+      - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+    depends_on: [prometheus]
+
+  # ---- Change data capture for module 13. Not started by default. ----
+  # Start with:  docker compose --profile cdc up -d
+  pg:
+    image: postgres:16-alpine
+    container_name: pg
+    profiles: ['cdc']
+    environment:
+      POSTGRES_PASSWORD: 'lab'
+    # logical decoding lets a connector read the database's change log
+    command: ['postgres', '-c', 'wal_level=logical']
+
+  cdc-connect:
+    image: quay.io/debezium/connect:latest
+    container_name: cdc-connect
+    profiles: ['cdc']
+    ports:
+      - '8087:8083'
+    depends_on: [kafka-1, kafka-2, kafka-3, pg]
+    environment:
+      BOOTSTRAP_SERVERS: 'kafka-1:19092,kafka-2:19092,kafka-3:19092'
+      GROUP_ID: 'cdc-connect'
+      CONFIG_STORAGE_TOPIC: 'cdc-configs'
+      OFFSET_STORAGE_TOPIC: 'cdc-offsets'
+      STATUS_STORAGE_TOPIC: 'cdc-status'
+      CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      STATUS_STORAGE_REPLICATION_FACTOR: 3

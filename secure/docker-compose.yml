@@ -1,0 +1,53 @@
+# A secured one-broker cluster for the security lab. LAB ONLY: the passwords below are examples.
+# Before the first start:  sh make-certs.sh
+# Start:  docker compose up -d        Stop:  docker compose down
+#
+# Clients must use TLS and a user name and password. There is no open port.
+services:
+  kafka-sec:
+    image: apache/kafka:4.3.1
+    hostname: kafka-sec
+    container_name: kafka-sec
+    volumes:
+      - ./secrets:/etc/kafka/secrets:ro
+      - ./clients:/clients:ro
+    environment:
+      CLUSTER_ID: 'Sec1g3nShT-eMCtK--X8sec'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-sec:9093'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+
+      # --- listeners: one for clients and brokers (TLS + password), one for controllers (password) ---
+      KAFKA_LISTENERS: 'SECURE://:9094,CONTROLLER://:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'SECURE://kafka-sec:9094'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'SECURE:SASL_SSL,CONTROLLER:SASL_PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'SECURE'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+
+      # --- encryption: the broker's key and certificate ---
+      KAFKA_SSL_KEYSTORE_LOCATION: '/etc/kafka/secrets/broker.p12'
+      KAFKA_SSL_KEYSTORE_PASSWORD: 'labpass'
+      KAFKA_SSL_KEYSTORE_TYPE: 'PKCS12'
+      KAFKA_SSL_KEY_PASSWORD: 'labpass'
+      KAFKA_SSL_TRUSTSTORE_LOCATION: '/etc/kafka/secrets/truststore.p12'
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: 'labpass'
+      KAFKA_SSL_TRUSTSTORE_TYPE: 'PKCS12'
+
+      # --- authentication: user names and passwords (SASL PLAIN, carried inside TLS) ---
+      KAFKA_SASL_ENABLED_MECHANISMS: 'PLAIN'
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: 'PLAIN'
+      KAFKA_SASL_MECHANISM_CONTROLLER_PROTOCOL: 'PLAIN'
+      KAFKA_LISTENER_NAME_SECURE_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_alice="alice-secret" user_bob="bob-secret";'
+      KAFKA_LISTENER_NAME_CONTROLLER_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret" user_admin="admin-secret";'
+
+      # --- authorization: deny by default; only "admin" may do everything ---
+      KAFKA_AUTHORIZER_CLASS_NAME: 'org.apache.kafka.metadata.authorizer.StandardAuthorizer'
+      KAFKA_SUPER_USERS: 'User:admin'
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'false'
